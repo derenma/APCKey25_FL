@@ -1,4 +1,4 @@
-# name=APCKey25mk2
+# name=APCKey25mk2V2
 # url=https://forum.image-line.com/viewtopic.php?f=1994&t=225886
 # This import section is loading the back-end code required to execute the script. You may not need all modules that are available for all scripts.
 import transport
@@ -399,8 +399,12 @@ class PadLighting():
 		time.sleep(1)
 		
 		print("turning pads on.")
+		print("sleeping and testing")
+		time.sleep(3)
 		self.all_pads_on(speed=0.01)
-		#self.animate_pads_on()
+		#self.self_test()
+		#time.sleep(1)
+		self.animate_pads_on()
 		self.all_pads_dim(self.initialColor, speed=0.05)
 		
 		print("turning on all other buttons.")
