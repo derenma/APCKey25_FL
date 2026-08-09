@@ -369,6 +369,7 @@ class DeviceHandler():
 		self._dispatch[mapping.SOUND_BUTTONS.id_for("shift")] = self._handle_shift
 		self._dispatch[mapping.SOUND_BUTTONS.id_for("play")] = self._handle_play
 		self._dispatch[mapping.SOUND_BUTTONS.id_for("record")] = self._handle_record
+		self._dispatch[mapping.SOUND_BUTTONS.id_for("stop")] = self._handle_stop
 
 		self.deviceInfo()
 
@@ -454,7 +455,8 @@ class DeviceHandler():
 		Values just above 100 mean "turned down" (encoded as 127 minus the
 		delta), values just above 0 mean "turned up" (the delta itself).
 		This accumulates those deltas into a per-knob absolute value clamped
-		to 1-128, stored in `self.knobs`.
+		to 1-127 (MIDI data bytes are 7-bit; 128 would be invalid), stored
+		in `self.knobs`.
 
 		Args:
 			event: Incoming FL MIDI event; `data1` selects the knob
@@ -477,10 +479,13 @@ class DeviceHandler():
 
 		if value > 0 and value < 28:
 			vel = value
-			if self.knobs[knob] < 128:
+			if self.knobs[knob] < 127:
 				self.knobs[knob] = self.knobs[knob] + (vel+1)
-				if self.knobs[knob] > 128:
-					self.knobs[knob] = 128
+				if self.knobs[knob] > 127:
+					# Clamped to 127, not 128: event.data2 is a MIDI data
+					# byte and must stay 7-bit (0-127) — 128 would be an
+					# invalid value actually sent to FL.
+					self.knobs[knob] = 127
 			log_verbose(f"knob={knob} dir=up delta=+{vel+1} value={self.knobs[knob]}")
 
 		event.data2 = self.knobs[knob]
@@ -501,15 +506,30 @@ class DeviceHandler():
 				not reassign `event` from this method's (non-existent)
 				return value.
 		"""
+		# Sustain pedal (CC 64) numerically collides with track_1 (Note
+		# 0x40) — must be told apart by status byte before anything below
+		# keys off data1 alone. Stubbed for now (see _handle_sustain) rather
+		# than actually implemented: swallowed and logged in both modes,
+		# not yet passed through to FL as real sustain input.
+		if event.data1 == mapping.SUSTAIN_CC and (event.status & 0xF0) == midi.MIDI_CONTROLCHANGE:
+			self._handle_sustain(event)
+			return
+
 		# Map the pads if in performance mode
 		if self.state.isPerformance():
-			log_verbose(f"performance-mode remap: shift={self._shift_active()} data1={event.data1} data2={event.data2}")
 			self._handle_pad_performance_trigger(event)
 			grid_pos = mapping.PAD_TO_GRID_POSITION.get(event.data1)
 			if grid_pos is not None:
 				row, col = grid_pos
 				track = row + self.live.track_offset
-				event.data1 = mapping.performance_note_for(track, col)
+				remapped_note = mapping.performance_note_for(track, col)
+				# Logged only for actual pad remaps — logging this
+				# unconditionally for every performance-mode event
+				# (including knobs/buttons, which are never remapped)
+				# was misleading and made knob logging look inconsistent
+				# between modes.
+				log_verbose(f"performance-mode remap: shift={self._shift_active()} pad={event.data1} -> note={remapped_note} (row={row} col={col} track={track})")
+				event.data1 = remapped_note
 				# Must NEVER fall into the dispatch lookup below — see DEV_NOTES.md: eventHandler
 				# (performance-mode remap & the row-5/knob collision bug) for why.
 				return
@@ -578,6 +598,28 @@ class DeviceHandler():
 		if event.data2 == 127:
 			# Called on every press — see DEV_NOTES.md: _handle_record.
 			self.controls.toggleRecord()
+		event.handled = True
+
+	def _handle_stop(self, event):
+		"""Handle the STOP button. Stubbed — no action wired up yet, matching
+		`_handle_track_button`/`_handle_scene_button`'s stub pattern.
+
+		Args:
+			event: Incoming FL MIDI event. Always marked handled.
+		"""
+		log_status(f"[stub] stop button ({hex(event.data1)}) not implemented")
+		event.handled = True
+
+	def _handle_sustain(self, event):
+		"""Handle the SUSTAIN button (sent as standard MIDI Sustain, CC 64).
+		Stubbed — recognized and disambiguated from track_1 (see the
+		status-byte check in `eventHandler`), but not yet passed through to
+		FL as real sustain input in either mode.
+
+		Args:
+			event: Incoming FL MIDI event. Always marked handled.
+		"""
+		log_status(f"[stub] sustain button (CC {hex(event.data1)}) not implemented")
 		event.handled = True
 
 	def _handle_track_button(self, event):
@@ -890,6 +932,12 @@ class PerformanceMode:
 		self._first_run = True
 		self.track_offset = 0
 
+		# Per-track "was a block playing on this track last redraw" —
+		# used by OnUpdateLiveMode to detect a one-shot track finishing
+		# naturally (playing -> not playing) so it can be explicitly
+		# cleared. See DEV_NOTES.md: OnUpdateLiveMode one-shot auto-clear.
+		self._was_playing = {}
+
 		# select_tracks() is NOT called here — see DEV_NOTES.md:
 		# PerformanceMode.__init__ for why. See module-level OnInit().
 
@@ -974,6 +1022,14 @@ class PerformanceMode:
 			`playlist.*` — only to `self.pos`, which addresses physical
 			pads and doesn't move when scrolling). `blockNum` runs left to
 			right.
+
+			`getLiveBlockStatus(row, col, 0)` returns a bitmask: filled=1,
+			scheduled=2, playing=4. A block that's actually playing is
+			solid; a block that's filled+scheduled but not yet playing
+			(queued to launch next in this row) flashes instead of using a
+			separate color, so the pending clip-transition is visible at a
+			glance — see DEV_NOTES.md: `OnUpdateLiveMode` clip-transition
+			LED behavior.
 		"""
 		if self._first_run:
 			self._first_run = False
@@ -983,18 +1039,37 @@ class PerformanceMode:
 
 		for idx in range(1, 6):
 			track = idx + self.track_offset
+			track_now_playing = False
 			for blockNum in range(0, 8):
 				active = playlist.getLiveBlockStatus(track,blockNum,0)
+				pad = self.pos[idx][blockNum]
 				if active:
 					color_hex = hex(playlist.getLiveBlockColor(track,blockNum) & 0xffffffff)
-					if active == 7:
-						self.lighting.set_pad(self.pos[idx][blockNum], True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_4"), color=6)
-						log_verbose(f"row={idx} track={track} col={blockNum} pad={self.pos[idx][blockNum]} active=7 color={color_hex}")
+					is_playing = bool(active & 4)
+					is_scheduled = bool(active & 2)
+					track_now_playing = track_now_playing or is_playing
+					if is_playing:
+						self.lighting.set_pad(pad, True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_4"), color=6)
+					elif is_scheduled:
+						# Queued to start next in this row, not playing yet — flash.
+						self.lighting.set_pad(pad, True, mode=mapping.PAD_LED_FUNCTION.id_for("pulse_1_4"), color=1)
 					else:
-						self.lighting.set_pad(self.pos[idx][blockNum], True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_4"), color=1)
-						log_verbose(f"row={idx} track={track} col={blockNum} pad={self.pos[idx][blockNum]} active={active} color={color_hex}")
+						self.lighting.set_pad(pad, True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_4"), color=1)
+					log_verbose(f"row={idx} track={track} col={blockNum} pad={pad} active={active} playing={is_playing} scheduled={is_scheduled} color={color_hex}")
 				else:
-					self.lighting.set_pad(self.pos[idx][blockNum], False)
+					self.lighting.set_pad(pad, False)
+
+			# One-shot auto-clear: if this track just stopped playing on its
+			# own (not via a manual stop, which already clears it) and it's
+			# set to LiveLoop_OneShot, explicitly drop FL's armed/queued
+			# state for it — otherwise the finished one-shot clip replays
+			# on the next song PLAY instead of staying stopped. See
+			# DEV_NOTES.md: OnUpdateLiveMode one-shot auto-clear.
+			was_playing = self._was_playing.get(track, False)
+			if was_playing and not track_now_playing and playlist.getLiveLoopMode(track) == 1:
+				playlist.triggerLiveClip(track, -1, midi.TLC_Fill)
+				log_status(f"One-shot clip finished on track={track}; auto-cleared")
+			self._was_playing[track] = track_now_playing
 
 		log_verbose(f"event={value}")
 
@@ -1066,6 +1141,7 @@ def OnMidiIn(event):
 	state.refresh()
 	if not state.isPerformance():
 		kbd.eventHandler(event)
+		log_verbose(f"data1={event.data1} data2={event.data2}")
 
 def OnMidiOutMsg(event):
 	"""FL callback: currently unused.

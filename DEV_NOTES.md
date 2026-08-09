@@ -16,6 +16,9 @@ name if a reference is stale.
 - [`_handle_record` — why `toggleRecord` is called on every press](#_handle_record--why-togglerecord-is-called-on-every-press)
 - [`PerformanceMode.__init__` — "Operation unsafe at current time" crash](#performancemode__init__--operation-unsafe-at-current-time-crash)
 - [`OnMidiMsg` / `OnMidiIn` — dual-port dispatch via the performance-mode gate](#onmidimsg--onmidiin--dual-port-dispatch-via-the-performance-mode-gate)
+- [`_handle_sustain` — why SUSTAIN is a stub, and when that might need to change](#_handle_sustain--why-sustain-is-a-stub-and-when-that-might-need-to-change)
+- [`OnUpdateLiveMode` — clip-transition LED behavior (flashing vs. solid)](#onupdatelivemode--clip-transition-led-behavior-flashing-vs-solid)
+- [`OnUpdateLiveMode` — one-shot auto-clear](#onupdatelivemode--one-shot-auto-clear)
 
 ---
 
@@ -245,3 +248,154 @@ is driven by mode instead: `OnMidiMsg` only dispatches into
 only dispatches while it isn't. This `isPerformance()` gate is intentional
 and is the single dispatch mechanism by design — it's been confirmed
 sufficient in practice, not a known gap that still needs fixing.
+
+---
+
+## `_handle_sustain` — why SUSTAIN is a stub, and when that might need to change
+
+**Location:** `DeviceHandler._handle_sustain`, ~line 613; the disambiguation
+check that routes to it lives in `eventHandler`.
+
+The device has a dedicated physical **SUSTAIN** button (not a TS pedal
+jack). Its MIDI data byte (`0x40`) numerically collides with `track_1`
+(`TRACK_BUTTONS`' `0x40`, a Note On/Off), so `eventHandler` disambiguates by
+status byte (`event.status & 0xF0 == midi.MIDI_CONTROLCHANGE`) before any
+note-keyed dispatch runs, and routes SUSTAIN to this stub.
+
+**Confirmed via a real-hardware MIDI monitor log**, both the disambiguation
+logic and the button's raw behavior:
+
+```
+90 40 5F  Note On : E5             <- a keybed note that happens to be 0x40
+80 40 00  Note Off: E5
+B0 40 7F  Control Change: Damper pedal (sustain)   <- SUSTAIN press
+B0 40 00  Control Change: Damper pedal (sustain)   <- SUSTAIN release
+```
+
+Every one of those four lines was tagged `(generic controller)` by FL's
+monitor — the role label for a port with **no script assigned**, i.e. the
+main `APC Key 25 mk2` port this project's MIDI Settings guide (README.md)
+explicitly says to leave unscripted, not `MIDIIN2` (the port this script is
+actually bound to). In other words: SUSTAIN already reaches FL correctly,
+entirely on its own, as a native Control Change on the unscripted port —
+this script doesn't need to do anything for it to work, and currently
+doesn't need to.
+
+**That's why `_handle_sustain` stays a stub deliberately, not just as an
+unfinished TODO**: there's nothing to implement right now. The
+`eventHandler` disambiguation code is best understood as defensive
+insurance — cheap, and correct per the confirmed status-byte split above —
+for a collision that, per the hardware evidence, doesn't actually occur on
+the port this script listens to today.
+
+**When this would need real work:** if the main/generic port ever gets a
+script assigned to it in the future (e.g. to remap SUSTAIN to something
+else, or handle it more deliberately), that script would take over routing
+for the port FL currently handles natively — at that point a real
+pass-through handler would be needed so plain sustain-pedal behavior into
+FL isn't lost. Not a current need; flagged here so the reason doesn't have
+to be re-discovered from scratch later.
+
+---
+
+## `OnUpdateLiveMode` — clip-transition LED behavior (flashing vs. solid)
+
+**Location:** `PerformanceMode.OnUpdateLiveMode`, ~line 1001.
+
+`getLiveBlockStatus(row, col, 0)` returns a bitmask: filled=1, scheduled=2,
+playing=4. Before this behavior existed, the code only special-cased the
+combined value `active == 7` (filled+scheduled+playing, i.e. a block that's
+actually playing) as the "solid, distinct color" state, and treated
+*everything else* truthy — including a block that's filled+scheduled but
+**not yet playing** (queued to launch next in that row on the next
+bar/beat) — identically to a plain filled-but-idle block. That meant a
+pending clip transition was invisible on the pads: the about-to-launch clip
+looked exactly like every other filled-but-not-playing clip in the row
+until the moment it actually started.
+
+Fixed by checking the `playing` (4) and `scheduled` (2) bits independently
+instead of only matching the combined `== 7` case:
+
+```python
+is_playing = bool(active & 4)
+is_scheduled = bool(active & 2)
+if is_playing:
+    # solid, bright_4 mode, color 6
+elif is_scheduled:
+    # queued to start next, not playing yet — pulse_1_4 mode instead of bright_4
+else:
+    # merely filled, not scheduled — solid, bright_4 mode, color 1 (unchanged)
+```
+
+The queued-but-not-yet-playing case now uses `PAD_LED_FUNCTION`'s
+`pulse_1_4` mode (a quarter-note-rate flash, one of the previously-unused
+`pulse_*`/`blink_*` LED behaviors already defined in `mapping.py`) instead
+of `bright_4`, so it visibly flashes on the device until FL actually starts
+it — at which point `active` becomes `7` again and it's redrawn solid.
+`pulse_1_4` was picked as a reasonable default flash rate, not derived from
+any specific requirement; if it reads as too fast/slow on real hardware,
+swapping to a different `pulse_*`/`blink_*` id is a one-line change.
+
+**Unverified on real hardware:** whether FL's `getLiveBlockStatus` actually
+reports `2` (scheduled, not yet playing) in practice for a queued clip on
+this device/FL version — the original `== 7` check implies it does (some
+transitional state must exist for a queue to be visible at all), but the
+flashing behavior itself hasn't been confirmed against real playback yet.
+
+---
+
+## `OnUpdateLiveMode` — one-shot auto-clear
+
+**Location:** `PerformanceMode.OnUpdateLiveMode`, ~line 1007;
+`_was_playing` is initialized in `PerformanceMode.__init__`.
+
+Reported behavior: if a track's loop mode is "One shot" and its clip is
+selected/playing when the song is stopped and then restarted with PLAY,
+the one-shot clip plays again on restart — it needs to be fully
+"deselected"/cleared after it naturally finishes, not just left alone,
+or FL treats it as still armed.
+
+**"One shot" is a track-level setting, not per-block.** Confirmed straight
+from FL's own API stub source
+(`IL-Group/FL-Studio-API-Stubs`, `playlist/__performance.py`):
+`playlist.getLiveLoopMode(index) -> int`, where `1` = `LiveLoop_OneShot`.
+There's no separate per-clip one-shot flag — every block on a one-shot
+track shares the track's loop mode.
+
+Fix: `OnUpdateLiveMode` already loops every block on every visible track
+each redraw to draw LEDs; that same loop now also accumulates whether
+*any* block on the track is currently playing (`track_now_playing`). This
+is compared against `self._was_playing[track]` (set at the end of the
+previous redraw). When a track transitions from playing to not-playing
+(`was_playing and not track_now_playing`) **and** its loop mode is
+one-shot, the script calls `playlist.triggerLiveClip(track, -1,
+midi.TLC_Fill)` — the same "stop whatever's playing on this track" call
+`_handle_pad_performance_trigger` already uses for a manual pad-press stop
+— to explicitly drop FL's armed/queued state for that track:
+
+```python
+was_playing = self._was_playing.get(track, False)
+if was_playing and not track_now_playing and playlist.getLiveLoopMode(track) == 1:
+    playlist.triggerLiveClip(track, -1, midi.TLC_Fill)
+self._was_playing[track] = track_now_playing
+```
+
+This only fires on a *natural* finish (playing → not playing with no
+manual stop in between) — a manual pad-press stop already clears the track
+itself via the existing stop-trigger path, so this wouldn't double-fire
+for that case; it would just observe `track_now_playing` already `False`
+on the next redraw with no `was_playing → now stopped` transition left to
+catch.
+
+**Entirely unverified on real hardware — this is the speculative part.**
+Confirmed facts: the one-shot detection API (`getLiveLoopMode(track) == 1`)
+is real, and the `triggerLiveClip(track, -1, TLC_Fill)` clear call is the
+same one already confirmed working for manual stops. **Not confirmed:**
+whether this actually stops the reported auto-replay-on-restart behavior,
+whether `OnUpdateLiveMode` fires reliably at the exact moment a one-shot
+clip finishes (vs. only on the next unrelated grid change), and whether
+calling `triggerLiveClip` from inside `OnUpdateLiveMode` itself causes any
+re-entrancy/timing issues (FL may re-invoke `OnUpdateLiveMode` as a result
+of the clear call — believed harmless since `_was_playing[track]` is
+already updated to `False` by the time that would happen, so it shouldn't
+re-trigger a second clear, but this hasn't been observed in practice).

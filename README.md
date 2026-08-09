@@ -10,6 +10,25 @@ Forum thread: https://forum.image-line.com/viewtopic.php?t=323673
 
 Github: https://github.com/derenma/APCKey25_FL
 
+## MIDI Settings setup
+
+The APC Key 25 mk2 shows up as **two** MIDI ports per direction in FL Studio's
+MIDI Settings — a generic control-surface port and a second `MIDIIN2`/`MIDIOUT2`
+port. This script must be assigned to the **second** port only:
+
+| Direction | Port | Setting |
+|---|---|---|
+| Output | `APC Key 25 mk2` | Leave unassigned — should show as the default "MIDI hardware port", no script selected. |
+| Output | `MIDIOUT2 (APC Key 25 mk2)` | Enable the port and set this script as the handler. |
+| Input | `APC Key 25 mk2` | Leave unassigned — should show as "(generic controller)", no port or script selected. |
+| Input | `MIDIIN2 (APC Key 25 mk2)` | Enable the port and set this script as the handler. |
+
+Also set **Performance Mode MIDI Channel: 1**.
+
+Disabling **"Link note on velocity to: Velocity"** is recommended — the APC
+Key 25 mk2's key velocity sensitivity is poor, and linking it makes normal
+keybed playing feel inconsistent.
+
 ## Files
 
 - **`device_APCKey25mk2.py`** — the active script. This is what FL Studio loads.
@@ -42,11 +61,12 @@ This is the default mode: FL's playlist is **not** in Performance Mode (`playlis
 
 - **Keybed keys** pass through to FL untouched (normal MIDI note input) — the script doesn't intercept them.
 - **Pads** (note IDs `0x00`–`0x27`, the 5x8 grid) are **not** remapped or specially handled in standard mode; presses pass through as regular notes, same as the keybed. There is currently no standard-mode pad→action behavior implemented.
-- **Knobs** (CC `0x30`–`0x37`, the 8 knobs above the pads) send relative encoder values. `DeviceHandler.knobAdjust` decodes the relative delta into an absolute 1–128 value per knob and writes it to `ControlStateStore`.
+- **Knobs** (CC `0x30`–`0x37`, the 8 knobs above the pads) send relative encoder values. `DeviceHandler.knobAdjust` decodes the relative delta into an absolute 1–127 value per knob (clamped to stay within a valid 7-bit MIDI data byte) and writes it to `ControlStateStore`.
 - **SHIFT** (`0x62`) is a **toggle**, not a hold: press once to engage (flashes the track/scene function-button LEDs), press again to release. The physical release (note-off) is ignored by design — this matches the original behavior and was an intentional decision, not a bug. Shift state is tracked in `ControlStateStore` via `DeviceHandler._shift_active()`.
-- **PLAY** (`0x5B`) and **REC** (`0x5D`) call into `TransportHandler.togglePlay()` / `toggleRecord()` on every full press (velocity 127), which call FL's `transport.start/stop/record()` and resync `SessionState` from FL's actual transport state afterward.
+- **PLAY/Pause** (`0x5B`) and **REC** (`0x5D`) call into `TransportHandler.togglePlay()` / `toggleRecord()` on every full press (velocity 127), which call FL's `transport.start/stop/record()` and resync `SessionState` from FL's actual transport state afterward. Note: this is the transport **Play/Pause** button — physically and functionally distinct from the **Stop/All Clips** button below, even though the APC Key 25 mk2's Play/Pause button behaves more like a Play/Stop toggle here (the device was originally designed for a different DAW's transport model).
 - **Track buttons** (`0x40`–`0x47`, below the pad grid) and **scene buttons** (`0x52`–`0x56`) are recognized but **stubbed** — pressing one logs `[stub] track button 'X' not implemented` and marks the event handled, but no action fires. Their SHIFT-held names (`up`/`down`/`left`/`right`/`knob_vol`/`knob_pan`/`knob_send`/`knob_device` for track buttons; `clip_stop`/`solo`/`mute`/`rec_arm`/`select` for scene buttons) are already mapped in `mapping.py` for whenever this gets implemented — **except** SHIFT+up/down, which is implemented but only takes effect in performance mode (see below); pressed outside performance mode, up/down still fall through to the stub.
-- **STOP** (`0x51`) is defined in `mapping.py` but has no handler wired up at all — currently a no-op pass-through.
+- **Stop/All Clips** (`0x51`) — a separate physical button from Play/Pause — is recognized and **stubbed** (`DeviceHandler._handle_stop`), matching the track/scene button pattern: logs `[stub] stop button ... not implemented` and marks the event handled, no action fires yet.
+- **SUSTAIN** (dedicated physical button — the device has no separate TS pedal jack; the button itself sends standard MIDI Sustain, CC 64, status `0xB0`-`0xBF`) numerically collides with track button `0x40` (`track_1`, a Note On/Off) since both use data byte `0x40`. `DeviceHandler.eventHandler` disambiguates by status byte before any note-keyed dispatch runs (see `mapping.SUSTAIN_CC`) and routes it to `_handle_sustain`, which — like the track/scene/stop buttons — is currently a **stub**: it's correctly recognized and kept from being misrouted as a `track_1` press, but isn't yet passed through to FL as real sustain input in either mode.
 
 ## Performance mode
 
@@ -111,6 +131,7 @@ These are called out in code comments where relevant; collected here for visibil
 
 - **Pad vs. keybed note ID collision:** pad note IDs (`0x00`–`0x27`) and low keybed key note numbers can numerically overlap. The device has two physical MIDI ports (keys vs. control surface), but FL Studio unifies them before this script ever sees an event — there's no reliable way to tell them apart from the note number alone. `DeviceHandler._classify_control` treats anything in the pad ID range as a pad, matching existing behavior, but this is unverified for genuine low keybed notes.
 - **`event.handled = True`** is set for every event the script fully handles (shift, play, record, track/scene stubs, knobs). This is provisional — it stops FL from also treating those as passthrough MIDI, but hasn't been validated on hardware that this is the desired behavior for every one of those event types.
-- **Track/scene buttons and STOP** are unimplemented (see Standard mode above), except SHIFT+up/down in performance mode (track scroll — see above).
+- **Track/scene buttons and Stop/All Clips** are unimplemented (see Standard mode above), except SHIFT+up/down in performance mode (track scroll — see above).
+- **SUSTAIN / track_1 (`0x40`) disambiguation** — the status-byte check (`event.status & 0xF0 == midi.MIDI_CONTROLCHANGE`) matches real hardware logs (`90 40 xx` = Note On for a note that happens to be `0x40`; `B0 40 xx` = the SUSTAIN button's Control Change), confirming the two really are told apart correctly by status byte. What's still unconfirmed: whether SUSTAIN and this Note-0x40 collision are even reachable by this script at all — the confirming log was captured on the port FL labels `(generic controller)`, i.e. the **unscripted** main port per this README's MIDI Settings table, not `MIDIIN2` (the port this script is actually assigned to). If SUSTAIN and keybed notes never arrive on `MIDIIN2`, this disambiguation code may never actually run in practice — harmless either way, but its real-world relevance needs confirming. Sustain itself is currently a stub (see Standard mode above) — passthrough behavior is a follow-up, not yet implemented.
 - **Performance-mode pad stop** (`_handle_pad_performance_trigger`, `playlist.triggerLiveClip(row, -1, midi.TLC_Fill)`) is confirmed working on real hardware. Row 5 (bottom row) not starting clips was root-caused to a dispatch-table collision (see Performance mode section above) and fixed — pending re-verification on real hardware that row 5 now starts correctly and that rows 1-4 are unaffected.
 - **Track scroll (SHIFT + up/down)** is new. An import-time crash (`RuntimeError: Operation unsafe at current time` from calling `playlist.selectTrack`/`deselectAll` in `PerformanceMode.__init__`) was caught and fixed by deferring the initial selection to `OnInit()`. Confirmed on real hardware: pad LEDs scroll correctly, and stopping a clip on a scrolled row targets the right track. **Not yet confirmed on real hardware:** starting a clip on a scrolled row via the new `mapping.performance_note_for(track, col)` formula — this replaced the old fixed remap table and is what makes starting scroll-aware, but its validity for tracks beyond 5 (i.e. after actually scrolling) is inferred from the pattern in tracks 1-5, not independently verified.

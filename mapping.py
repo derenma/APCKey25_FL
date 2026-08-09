@@ -68,9 +68,15 @@ TRACK_BUTTONS = BiMap({
 	0x47: "track_8",
 })
 
+# Dedicated physical SUSTAIN button (the device has no separate TS pedal
+# jack), sent as standard MIDI Sustain (Control Change 64), i.e. status byte
+# 0xB0-0xBF. Numerically collides with TRACK_BUTTONS' 0x40 ("track_1"),
+# which is a Note On/Off (status 0x90-0x9F) — the two can only be told apart
+# by status byte, not data1 alone. See DeviceHandler.eventHandler's sustain
+# check in device_APCKey25mk2.py.
+SUSTAIN_CC = 0x40
+
 # Same 8 physical buttons, meaning while SHIFT is held.
-# !! 0x40 = "up" pressed/unpressed is value == 144/128
-# !! 0x40 = "sustain" pressed/unpressed is value == 176
 TRACK_BUTTONS_SHIFT = BiMap({
 	0x40: "up",
 	0x41: "down",
