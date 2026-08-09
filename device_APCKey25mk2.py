@@ -518,13 +518,13 @@ class DeviceHandler():
 			if self._shift_active():
 				self.controlStates.set_active(ControlKind.FUNCTION_BUTTON, event.data1, False)
 				print("shift active")
-				self.buttons.knob_ctrl_dim()
-				#self.buttons.all_funcs_stop_flash()
+				self.buttons.set_knob_ctrl_dim(True)
+				#self.buttons.set_func_buttons(True)
 			else:
 				self.controlStates.set_active(ControlKind.FUNCTION_BUTTON, event.data1, True)
 				print("shift inactive")
-				self.buttons.knob_ctrl_bright()
-				#self.buttons.all_funcs_flash()
+				self.buttons.set_knob_ctrl_dim(False)
+				#self.buttons.set_func_buttons(True, flash=True)
 
 		# event.handled=True is provisional — see DEV_NOTES.md: _handle_shift.
 		event.handled = True
@@ -693,14 +693,12 @@ class PadLighting():
 	track/scene function buttons.
 
 	Note:
-		The single-pad methods below (`pad_color`, `pad_pressed`,
-		`pad_unpressed`, `pad_led_on`, `pad_led_off`) diff against
-		`ControlStateStore` and skip sending when nothing would change —
-		these are the natural call sites for that (e.g. `PerformanceMode`
-		redraws the whole live-clip grid on every playlist update, one pad
-		at a time). The bulk methods (`cycle_pads` and friends) always send,
-		since their point is guaranteed uniform state across every pad, not
-		traffic reduction.
+		`set_pad` diffs against `ControlStateStore` and skips sending when
+		nothing would change — the natural call site for that is
+		`PerformanceMode`, which redraws the whole live-clip grid on every
+		playlist update, one pad at a time. The bulk methods (`cycle_pads`
+		and friends) always send, since their point is guaranteed uniform
+		state across every pad, not traffic reduction.
 	"""
 	def __init__(self, midiHandler, state, controlStates):
 		self.midiHandler = midiHandler
@@ -713,21 +711,22 @@ class PadLighting():
 
 		log_status("Turning pads on...")
 		time.sleep(3)
-		self.all_pads_on(speed=0.01)
+		log_verbose("speed=0.01")
+		self.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x00, speed=0.01)
 		#self.animate_pads_on(speed=0.05)
-		self.all_pads_dim(self.initialColor, speed=0.05)
+		log_verbose(f"color={self.initialColor} speed=0.05")
+		self.cycle_pads(self.initialDim, self.initialColor, speed=0.05)
 
 		log_status("Turning on function buttons...")
-		self.all_funcs_on()
+		self.set_func_buttons(True)
 
 	def cycle_pads(self, command, value, speed=0.05):
 		"""Send the same LED status byte/velocity to every pad.
 
 		Always sends, doesn't diff against tracked state — the point of
 		this method is guaranteed uniform state across every pad, not
-		traffic reduction. It also keeps the store in sync so the
-		single-pad diffed methods below (pad_led_on/off etc.) have an
-		accurate baseline afterward.
+		traffic reduction. It also keeps the store in sync so `set_pad`
+		below has an accurate baseline afterward.
 
 		Args:
 			command: LED status byte (`mapping.PAD_LED_FUNCTION` id).
@@ -750,54 +749,30 @@ class PadLighting():
 			self.midiHandler.sendMessage(mode, key, value)
 			self.controlStates.set_led(ControlKind.FUNCTION_BUTTON, key, mode, value)
 
-	def _set_knob_ctrl_dim(self, value):
-		"""Send `value` to the 4 knob-control button LEDs at dim brightness."""
-		mode = mapping.PAD_LED_FUNCTION.id_for("bright_4")
-		for key in mapping.KNOB_CTRL.by_id:
-			self.midiHandler.sendMessage(mode, key, value)
-			self.controlStates.set_led(ControlKind.FUNCTION_BUTTON, key, mode, value)
-
-	def _set_knob_ctrl_bright(self, value):
-		"""Send `value` to the 4 knob-control button LEDs at full brightness."""
-		mode = mapping.PAD_LED_FUNCTION.id_for("bright_0")
-		for key in mapping.KNOB_CTRL.by_id:
-			self.midiHandler.sendMessage(mode, key, value)
-			self.controlStates.set_led(ControlKind.FUNCTION_BUTTON, key, mode, value)
-
-	def all_funcs_on(self):
-		"""Turn on every track/scene function button LED."""
-		self._set_func_buttons(0x01)
-
-	def all_funcs_off(self):
-		"""Turn off every track/scene function button LED."""
-		self._set_func_buttons(0x00)
-
-	def all_funcs_flash(self):
-		"""Set every track/scene function button LED to flash."""
-		self._set_func_buttons(0x02)
-
-	def all_funcs_stop_flash(self):
-		"""Stop every track/scene function button LED from flashing (back
-		to solid on)."""
-		self._set_func_buttons(0x01)
-
-	def knob_ctrl_dim(self):
-		"""Dim the 4 knob-control button LEDs (SHIFT engaged)."""
-		self._set_knob_ctrl_dim(0x00)
-
-	def knob_ctrl_bright(self):
-		"""Brighten the 4 knob-control button LEDs (SHIFT released)."""
-		self._set_knob_ctrl_dim(0x01)
-
-	def all_pads_on(self, speed=0.05):
-		"""Turn on every pad LED (no color, no extra brightness).
+	def set_func_buttons(self, lit: bool, flash: bool = False):
+		"""Set every track/scene function button LED.
 
 		Args:
-			speed: Seconds to sleep between pads.
+			lit: `True` = on, `False` = off. Ignored if `flash=True`.
+			flash: `True` = flashing (overrides `lit`).
 		"""
-		log_verbose(f"speed={speed}")
-		# no bright, no color
-		self.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x00, speed=speed)
+		value = 0x02 if flash else (0x01 if lit else 0x00)
+		self._set_func_buttons(value)
+
+	def set_knob_ctrl_dim(self, dimmed: bool):
+		"""Dim or brighten the 4 knob-control button LEDs (SHIFT engaged/released).
+
+		Args:
+			dimmed: `True` = dim (SHIFT engaged), `False` = full brightness
+				(SHIFT released).
+		"""
+		if dimmed:
+			mode, value = mapping.PAD_LED_FUNCTION.id_for("bright_4"), 0x00
+		else:
+			mode, value = mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x01
+		for key in mapping.KNOB_CTRL.by_id:
+			self.midiHandler.sendMessage(mode, key, value)
+			self.controlStates.set_led(ControlKind.FUNCTION_BUTTON, key, mode, value)
 
 	def animate_pads_on(self, speed=0.1):
 		"""Light pads one at a time in `mapping.START_PATTERN` order, for
@@ -829,81 +804,25 @@ class PadLighting():
 				self.controlStates.set_led(ControlKind.PAD, key, mode, 0x22)
 				time.sleep(0.02)
 
-	def all_pads_off(self, speed=0.05):
-		"""Turn off every pad LED (no color, no extra brightness).
-
-		Args:
-			speed: Seconds to sleep between pads.
-		"""
-		# no bright, no color
-		log_verbose(f"speed={speed}")
-		self.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x00, speed=speed)
-
-	def all_pads_dim(self, color, speed=0.05):
-		"""Set every pad LED to `color` at the default dim brightness.
-
-		Args:
-			color: Velocity-palette index.
-			speed: Seconds to sleep between pads.
-		"""
-		log_verbose(f"color={color} speed={speed}")
-		self.cycle_pads(self.initialDim, color, speed=speed)
-
-	def pad_color(self, key, color):
-		"""Set one pad to `color` at bright_4, if different from its
-		currently tracked state.
-
-		Args:
-			key: Pad note id.
-			color: Velocity-palette index.
-		"""
-		mode = mapping.PAD_LED_FUNCTION.id_for("bright_4")
-		if self.controlStates.set_led(ControlKind.PAD, key, mode, color):
-			self.midiHandler.sendMessage(mode, key, color)
-
-	def pad_pressed(self, key):
-		"""Light one pad to indicate it's pressed, if different from its
-		currently tracked state.
-
-		Args:
-			key: Pad note id.
-		"""
-		mode = mapping.PAD_LED_FUNCTION.id_for("bright_4")
-		if self.controlStates.set_led(ControlKind.PAD, key, mode, 10):
-			self.midiHandler.sendMessage(mode, key, 10)
-
-	def pad_unpressed(self, key):
-		"""Return one pad to its default dim state, if different from its
-		currently tracked state.
-
-		Args:
-			key: Pad note id.
-		"""
-		if self.controlStates.set_led(ControlKind.PAD, key, self.initialDim, self.initialColor):
-			self.midiHandler.sendMessage(self.initialDim, key, self.initialColor)
-
-	def pad_led_on(self, mode, key, color):
-		"""Set one pad's LED status/color, if different from its currently
+	def set_pad(self, key, lit: bool, mode=None, color=None):
+		"""Set or clear one pad's LED, if different from its currently
 		tracked state.
 
 		Args:
-			mode: LED status byte (`mapping.PAD_LED_FUNCTION` id).
 			key: Pad note id.
-			color: Velocity-palette index.
+			lit: `True` = light the pad with `mode`/`color` (both required).
+				`False` = return the pad to its default dim state
+				(`mode`/`color` ignored).
+			mode: LED status byte (`mapping.PAD_LED_FUNCTION` id). Required
+				if `lit=True`.
+			color: Velocity-palette index. Required if `lit=True`.
 		"""
-		if self.controlStates.set_led(ControlKind.PAD, key, mode, color):
-			self.midiHandler.sendMessage(mode, key, color)
-
-	def pad_led_off(self, key):
-		"""Return one pad to its default dim state, if different from its
-		currently tracked state. Alias of `pad_unpressed`, used by
-		`PerformanceMode` for empty grid cells.
-
-		Args:
-			key: Pad note id.
-		"""
-		if self.controlStates.set_led(ControlKind.PAD, key, self.initialDim, self.initialColor):
-			self.midiHandler.sendMessage(self.initialDim, key, self.initialColor)
+		if lit:
+			target_mode, target_color = mode, color
+		else:
+			target_mode, target_color = self.initialDim, self.initialColor
+		if self.controlStates.set_led(ControlKind.PAD, key, target_mode, target_color):
+			self.midiHandler.sendMessage(target_mode, key, target_color)
 
 
 class PerformanceMode:
@@ -1027,13 +946,13 @@ class PerformanceMode:
 				if active:
 					color_hex = hex(playlist.getLiveBlockColor(track,blockNum) & 0xffffffff)
 					if active == 7:
-						self.lighting.pad_led_on(mapping.PAD_LED_FUNCTION.id_for("bright_4"), self.pos[idx][blockNum], 6)
+						self.lighting.set_pad(self.pos[idx][blockNum], True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_4"), color=6)
 						log_verbose(f"row={idx} track={track} col={blockNum} pad={self.pos[idx][blockNum]} active=7 color={color_hex}")
 					else:
-						self.lighting.pad_led_on(mapping.PAD_LED_FUNCTION.id_for("bright_4"), self.pos[idx][blockNum], 1)
+						self.lighting.set_pad(self.pos[idx][blockNum], True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_4"), color=1)
 						log_verbose(f"row={idx} track={track} col={blockNum} pad={self.pos[idx][blockNum]} active={active} color={color_hex}")
 				else:
-					self.lighting.pad_led_off(self.pos[idx][blockNum])
+					self.lighting.set_pad(self.pos[idx][blockNum], False)
 
 		log_verbose(f"event={value}")
 
@@ -1137,5 +1056,5 @@ def OnDeInit():
 	"""FL callback: called when the script is being unloaded. Turns off the
 	function button LEDs."""
 	log_status("onDeInit")
-	lighting.all_funcs_off()
+	lighting.set_func_buttons(False)
 	#lighting.animate_pads_off()
