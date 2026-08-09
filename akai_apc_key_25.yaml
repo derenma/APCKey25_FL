@@ -1,0 +1,1270 @@
+# Akai APC Key 25 mk2 MIDI/SysEx command map
+# Generated from the supplied Communications Protocol v1.1 PDF.
+# Hexadecimal scalars are ordinary YAML integers when loaded with PyYAML safe_load().
+# Document contradictions are preserved under document_discrepancies.
+
+schema:
+  name: akai_midi_command_map
+  version: '1.0'
+  python_loader: yaml.safe_load
+  data_types: YAML primitives only; no Python-specific YAML tags
+  byte_notation: Hexadecimal YAML integers are loaded as normal Python ints by PyYAML.
+source:
+  document: APC Key 25 mk2 - Communication Protocol - v1.1.pdf
+  title: AKAI Professional APC Key 25 mk2 Communications Protocol
+  protocol_version: '1.1'
+  document_date: '2023-02-09'
+  sha256: ee06aa845371f72f1c736f548c931577af3e4983d08397dcdc3717d860da5d72
+  scope: Only commands and mappings documented in the supplied PDF are represented. Inferred standard MIDI byte formulas are
+    explicitly labeled.
+device:
+  manufacturer: Akai Professional
+  model: APC Key 25 mk2
+  aliases:
+  - APC Key 25 MK2
+  - APC Key 25 mk2
+  manufacturer_id: 0x47
+  sysex_device_id: 0x7F
+  product_model_id: 0x4E
+  pad_grid:
+    rows: 5
+    columns: 8
+    count: 40
+  keybed:
+    keys: 25
+    velocity_sensitive: true
+  knob_count: 8
+  ui_button_count_documented: 20
+  ui_button_names_in_control_map: 19
+conventions:
+  direction:
+    outbound: host_to_device
+    inbound: device_to_host
+  midi_channels: 'Zero-based: 0-15 correspond to status-byte low nibbles 0x0-0xF.'
+  ports: Port numbers are metadata from the protocol and are not bytes in the MIDI message.
+  status_formulas:
+    note_off:
+      formula: 0x80 | channel
+      standard_midi_derived: true
+    note_on:
+      formula: 0x90 | channel
+      standard_midi_derived: true
+    control_change:
+      formula: 0xB0 | channel
+      standard_midi_derived: true
+  sysex_7bit_length:
+    msb_formula: (length >> 7) & 0x7F
+    lsb_formula: length & 0x7F
+    derived_from_documented_msb_lsb_fields: true
+ports:
+  0:
+    documented_use:
+    - keybed notes
+    - sustain CC
+  1:
+    documented_use:
+    - pads
+    - UI buttons
+    - knobs
+    - MIDI LED control
+  rgb_led_conflict:
+    preferred_port: 1
+    reason: Pages 1, 2, 14, and 15 consistently associate controls/LEDs with Port 1.
+    alternate_documented_port: 0
+    alternate_source: The RGB LED behavior table on page 3 labels every entry Port 0.
+controls:
+  keybed:
+    direction: inbound
+    message_types:
+    - note_on
+    - note_off
+    port: 0
+    channel: 0
+    note_range:
+    - 0x00
+    - 0x7F
+    velocity_range:
+    - 0x00
+    - 0x7F
+    octave_buttons:
+    - octave_down
+    - octave_up
+    source_page: 15
+  sustain:
+    direction: inbound
+    message_type: control_change
+    status: 0xB0
+    port: 0
+    channel: 0
+    cc: 0x40
+    value_range:
+    - 0x00
+    - 0x7F
+    source_page: 15
+  clip_launch_pads:
+    direction: bidirectional
+    inbound_message_types:
+    - note_on
+    - note_off
+    outbound_led_message_type: note_on
+    port: 1
+    note_range:
+    - 0x00
+    - 0x27
+    numbering: Bottom-left to upper-right, left-to-right within each row.
+    inbound_channel:
+      documented_value: null
+      note: The control table says "See notes" and only explicitly defines channels 0-15 for outbound LED behavior.
+    rows_bottom_to_top:
+    - - 0x00
+      - 0x01
+      - 0x02
+      - 0x03
+      - 0x04
+      - 0x05
+      - 0x06
+      - 0x07
+    - - 0x08
+      - 0x09
+      - 0x0A
+      - 0x0B
+      - 0x0C
+      - 0x0D
+      - 0x0E
+      - 0x0F
+    - - 0x10
+      - 0x11
+      - 0x12
+      - 0x13
+      - 0x14
+      - 0x15
+      - 0x16
+      - 0x17
+    - - 0x18
+      - 0x19
+      - 0x1A
+      - 0x1B
+      - 0x1C
+      - 0x1D
+      - 0x1E
+      - 0x1F
+    - - 0x20
+      - 0x21
+      - 0x22
+      - 0x23
+      - 0x24
+      - 0x25
+      - 0x26
+      - 0x27
+    entries:
+      pad_00:
+        index: 0
+        note: 0x00
+        row_from_bottom: 0
+        column_from_left: 0
+      pad_01:
+        index: 1
+        note: 0x01
+        row_from_bottom: 0
+        column_from_left: 1
+      pad_02:
+        index: 2
+        note: 0x02
+        row_from_bottom: 0
+        column_from_left: 2
+      pad_03:
+        index: 3
+        note: 0x03
+        row_from_bottom: 0
+        column_from_left: 3
+      pad_04:
+        index: 4
+        note: 0x04
+        row_from_bottom: 0
+        column_from_left: 4
+      pad_05:
+        index: 5
+        note: 0x05
+        row_from_bottom: 0
+        column_from_left: 5
+      pad_06:
+        index: 6
+        note: 0x06
+        row_from_bottom: 0
+        column_from_left: 6
+      pad_07:
+        index: 7
+        note: 0x07
+        row_from_bottom: 0
+        column_from_left: 7
+      pad_08:
+        index: 8
+        note: 0x08
+        row_from_bottom: 1
+        column_from_left: 0
+      pad_09:
+        index: 9
+        note: 0x09
+        row_from_bottom: 1
+        column_from_left: 1
+      pad_10:
+        index: 10
+        note: 0x0A
+        row_from_bottom: 1
+        column_from_left: 2
+      pad_11:
+        index: 11
+        note: 0x0B
+        row_from_bottom: 1
+        column_from_left: 3
+      pad_12:
+        index: 12
+        note: 0x0C
+        row_from_bottom: 1
+        column_from_left: 4
+      pad_13:
+        index: 13
+        note: 0x0D
+        row_from_bottom: 1
+        column_from_left: 5
+      pad_14:
+        index: 14
+        note: 0x0E
+        row_from_bottom: 1
+        column_from_left: 6
+      pad_15:
+        index: 15
+        note: 0x0F
+        row_from_bottom: 1
+        column_from_left: 7
+      pad_16:
+        index: 16
+        note: 0x10
+        row_from_bottom: 2
+        column_from_left: 0
+      pad_17:
+        index: 17
+        note: 0x11
+        row_from_bottom: 2
+        column_from_left: 1
+      pad_18:
+        index: 18
+        note: 0x12
+        row_from_bottom: 2
+        column_from_left: 2
+      pad_19:
+        index: 19
+        note: 0x13
+        row_from_bottom: 2
+        column_from_left: 3
+      pad_20:
+        index: 20
+        note: 0x14
+        row_from_bottom: 2
+        column_from_left: 4
+      pad_21:
+        index: 21
+        note: 0x15
+        row_from_bottom: 2
+        column_from_left: 5
+      pad_22:
+        index: 22
+        note: 0x16
+        row_from_bottom: 2
+        column_from_left: 6
+      pad_23:
+        index: 23
+        note: 0x17
+        row_from_bottom: 2
+        column_from_left: 7
+      pad_24:
+        index: 24
+        note: 0x18
+        row_from_bottom: 3
+        column_from_left: 0
+      pad_25:
+        index: 25
+        note: 0x19
+        row_from_bottom: 3
+        column_from_left: 1
+      pad_26:
+        index: 26
+        note: 0x1A
+        row_from_bottom: 3
+        column_from_left: 2
+      pad_27:
+        index: 27
+        note: 0x1B
+        row_from_bottom: 3
+        column_from_left: 3
+      pad_28:
+        index: 28
+        note: 0x1C
+        row_from_bottom: 3
+        column_from_left: 4
+      pad_29:
+        index: 29
+        note: 0x1D
+        row_from_bottom: 3
+        column_from_left: 5
+      pad_30:
+        index: 30
+        note: 0x1E
+        row_from_bottom: 3
+        column_from_left: 6
+      pad_31:
+        index: 31
+        note: 0x1F
+        row_from_bottom: 3
+        column_from_left: 7
+      pad_32:
+        index: 32
+        note: 0x20
+        row_from_bottom: 4
+        column_from_left: 0
+      pad_33:
+        index: 33
+        note: 0x21
+        row_from_bottom: 4
+        column_from_left: 1
+      pad_34:
+        index: 34
+        note: 0x22
+        row_from_bottom: 4
+        column_from_left: 2
+      pad_35:
+        index: 35
+        note: 0x23
+        row_from_bottom: 4
+        column_from_left: 3
+      pad_36:
+        index: 36
+        note: 0x24
+        row_from_bottom: 4
+        column_from_left: 4
+      pad_37:
+        index: 37
+        note: 0x25
+        row_from_bottom: 4
+        column_from_left: 5
+      pad_38:
+        index: 38
+        note: 0x26
+        row_from_bottom: 4
+        column_from_left: 6
+      pad_39:
+        index: 39
+        note: 0x27
+        row_from_bottom: 4
+        column_from_left: 7
+    source_pages:
+    - 2
+    - 14
+    - 15
+  buttons:
+    track_1:
+      note: 0x40
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: red
+        confidence: confirmed
+    track_2:
+      note: 0x41
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: red
+        confidence: confirmed
+    track_3:
+      note: 0x42
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: red
+        confidence: confirmed
+    track_4:
+      note: 0x43
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: red
+        confidence: confirmed
+    track_5:
+      note: 0x44
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: red
+        confidence: confirmed
+    track_6:
+      note: 0x45
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: red
+        confidence: confirmed
+    track_7:
+      note: 0x46
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: red
+        confidence: confirmed
+    track_8:
+      note: 0x47
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: red
+        confidence: confirmed
+    scene_launch_1:
+      note: 0x52
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: green
+        confidence: confirmed
+    scene_launch_2:
+      note: 0x53
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: green
+        confidence: confirmed
+    scene_launch_3:
+      note: 0x54
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: green
+        confidence: confirmed
+    scene_launch_4:
+      note: 0x55
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: green
+        confidence: confirmed
+    scene_launch_5:
+      note: 0x56
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: single_color
+        color: green
+        confidence: confirmed
+    stop_all_clips:
+      note: 0x51
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: none
+        confidence: confirmed_by_pages_2_and_15
+        bulk_table_conflict: Page 7 nevertheless lists 0x51 as a single-LED bulk target.
+    play:
+      note: 0x5B
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: document_conflict
+        page_2: green single-color LED
+        page_7: listed as a single-LED bulk target
+        page_15: LED None
+    record:
+      note: 0x5D
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: document_conflict
+        page_2: red single-color LED
+        page_7: omitted from the single-LED bulk target list
+        page_15: LED None
+    shift:
+      note: 0x62
+      channel: 0
+      port: 1
+      inbound_events:
+      - note_on
+      - note_off
+      led:
+        type: none
+    octave_down:
+      sends_midi: false
+      action: Transposes the keybed down one octave.
+    octave_up:
+      sends_midi: false
+      action: Transposes the keybed up one octave.
+  knobs:
+    knob_1:
+      cc: 0x30
+      channel: 0
+      port: 1
+      mode: relative
+      relative_value_encoding: not specified in protocol v1.1
+    knob_2:
+      cc: 0x31
+      channel: 0
+      port: 1
+      mode: relative
+      relative_value_encoding: not specified in protocol v1.1
+    knob_3:
+      cc: 0x32
+      channel: 0
+      port: 1
+      mode: relative
+      relative_value_encoding: not specified in protocol v1.1
+    knob_4:
+      cc: 0x33
+      channel: 0
+      port: 1
+      mode: relative
+      relative_value_encoding: not specified in protocol v1.1
+    knob_5:
+      cc: 0x34
+      channel: 0
+      port: 1
+      mode: relative
+      relative_value_encoding: not specified in protocol v1.1
+    knob_6:
+      cc: 0x35
+      channel: 0
+      port: 1
+      mode: relative
+      relative_value_encoding: not specified in protocol v1.1
+    knob_7:
+      cc: 0x36
+      channel: 0
+      port: 1
+      mode: relative
+      relative_value_encoding: not specified in protocol v1.1
+    knob_8:
+      cc: 0x37
+      channel: 0
+      port: 1
+      mode: relative
+      relative_value_encoding: not specified in protocol v1.1
+midi_messages:
+  inbound:
+    note_event:
+      template:
+      - status
+      - note
+      - velocity
+      statuses:
+        note_off_base: 0x80
+        note_on_base: 0x90
+      controls:
+      - keybed
+      - clip_launch_pads
+      - buttons
+    control_change_event:
+      template:
+      - status
+      - cc
+      - value
+      status_base: 0xB0
+      controls:
+      - sustain
+      - knobs
+  outbound:
+    rgb_pad_led:
+      direction: host_to_device
+      port: 1
+      port_conflict_ref: ports.rgb_led_conflict
+      template:
+      - status_for_behavior
+      - pad_note
+      - palette_velocity
+      status_formula: 0x90 | behavior_channel
+      note_off_documentation: Page 1 mentions Note On/Off for LED control, but the detailed RGB command sections specify only
+        Note On messages.
+      timing_sync: Pulse and blink rates are synchronized to an external clock rate.
+      pad_note_range:
+      - 0x00
+      - 0x27
+      palette_velocity_range:
+      - 0x00
+      - 0x7F
+      behaviors:
+        solid_10_percent:
+          channel: 0
+          status: 0x90
+          function: On at 10% brightness
+        solid_25_percent:
+          channel: 1
+          status: 0x91
+          function: On at 25% brightness
+        solid_50_percent:
+          channel: 2
+          status: 0x92
+          function: On at 50% brightness
+        solid_65_percent:
+          channel: 3
+          status: 0x93
+          function: On at 65% brightness
+        solid_75_percent:
+          channel: 4
+          status: 0x94
+          function: On at 75% brightness
+        solid_90_percent:
+          channel: 5
+          status: 0x95
+          function: On at 90% brightness
+        solid_100_percent:
+          channel: 6
+          status: 0x96
+          function: On at 100% brightness
+        pulse_1_16:
+          channel: 7
+          status: 0x97
+          function: Pulsing at 1/16 notes
+        pulse_1_8:
+          channel: 8
+          status: 0x98
+          function: Pulsing at 1/8 notes
+        pulse_1_4:
+          channel: 9
+          status: 0x99
+          function: Pulsing at 1/4 notes
+        pulse_1_2:
+          channel: 10
+          status: 0x9A
+          function: Pulsing at 1/2 notes
+        blink_1_24:
+          channel: 11
+          status: 0x9B
+          function: Blinking at 1/24 notes
+        blink_1_16:
+          channel: 12
+          status: 0x9C
+          function: Blinking at 1/16 notes
+        blink_1_8:
+          channel: 13
+          status: 0x9D
+          function: Blinking at 1/8 notes
+        blink_1_4:
+          channel: 14
+          status: 0x9E
+          function: Blinking at 1/4 notes
+        blink_1_2:
+          channel: 15
+          status: 0x9F
+          function: Blinking at 1/2 notes
+      palette_ref: rgb_palette
+      examples:
+        pad_00_solid_red_100_percent:
+        - 0x96
+        - 0x00
+        - 0x05
+        pad_00_solid_orange_100_percent:
+        - 0x96
+        - 0x00
+        - 0x09
+      source_pages:
+      - 1
+      - 3
+      - 4
+      - 5
+      - 7
+    single_color_button_led:
+      direction: host_to_device
+      port: 1
+      template:
+      - 0x90
+      - button_note
+      - led_behavior
+      channel: 0
+      status: 0x90
+      note_off_documentation: Page 1 mentions Note On/Off for LED control, but the detailed single-LED command section specifies
+        Note On status 0x90.
+      behaviors:
+        'off': 0x00
+        on_primary: 0x01
+        blink: 0x02
+        on_additional_range:
+        - 0x03
+        - 0x7F
+      confirmed_targets:
+      - track_1
+      - track_2
+      - track_3
+      - track_4
+      - track_5
+      - track_6
+      - track_7
+      - track_8
+      - scene_launch_1
+      - scene_launch_2
+      - scene_launch_3
+      - scene_launch_4
+      - scene_launch_5
+      conflicting_targets:
+      - play
+      - record
+      listed_in_bulk_table_despite_led_none:
+      - stop_all_clips
+      documented_bulk_target_notes:
+      - 0x40
+      - 0x41
+      - 0x42
+      - 0x43
+      - 0x44
+      - 0x45
+      - 0x46
+      - 0x47
+      - 0x52
+      - 0x53
+      - 0x54
+      - 0x55
+      - 0x56
+      - 0x51
+      - 0x5B
+      example_track_1_on:
+      - 0x90
+      - 0x40
+      - 0x01
+      source_pages:
+      - 2
+      - 6
+      - 7
+      - 14
+      - 15
+    bulk_led_update:
+      type: sequence_of_individual_three_byte_note_messages
+      not_a_distinct_midi_or_sysex_opcode: true
+      rgb_pad_targets:
+        start: 0x00
+        end: 0x27
+        count: 40
+      single_led_targets_ref: midi_messages.outbound.single_color_button_led.documented_bulk_target_notes
+      source_page: 7
+rgb_palette:
+  description: Predetermined velocity-to-RGB table for MIDI RGB pad LED messages.
+  velocity_to_hex_rgb:
+    0: '#000000'
+    1: '#1E1E1E'
+    2: '#7F7F7F'
+    3: '#FFFFFF'
+    4: '#FF4C4C'
+    5: '#FF0000'
+    6: '#590000'
+    7: '#190000'
+    8: '#FFBD6C'
+    9: '#FF5400'
+    10: '#591D00'
+    11: '#271B00'
+    12: '#FFFF4C'
+    13: '#FFFF00'
+    14: '#595900'
+    15: '#191900'
+    16: '#88FF4C'
+    17: '#54FF00'
+    18: '#1D5900'
+    19: '#142B00'
+    20: '#4CFF4C'
+    21: '#00FF00'
+    22: '#005900'
+    23: '#001900'
+    24: '#4CFF5E'
+    25: '#00FF19'
+    26: '#00590D'
+    27: '#001902'
+    28: '#4CFF88'
+    29: '#00FF55'
+    30: '#00591D'
+    31: '#001F12'
+    32: '#4CFFB7'
+    33: '#00FF99'
+    34: '#005935'
+    35: '#001912'
+    36: '#4CC3FF'
+    37: '#00A9FF'
+    38: '#004152'
+    39: '#001019'
+    40: '#4C88FF'
+    41: '#0055FF'
+    42: '#001D59'
+    43: '#000819'
+    44: '#4C4CFF'
+    45: '#0000FF'
+    46: '#000059'
+    47: '#000019'
+    48: '#874CFF'
+    49: '#5400FF'
+    50: '#190064'
+    51: '#0F0030'
+    52: '#FF4CFF'
+    53: '#FF00FF'
+    54: '#590059'
+    55: '#190019'
+    56: '#FF4C87'
+    57: '#FF0054'
+    58: '#59001D'
+    59: '#220013'
+    60: '#FF1500'
+    61: '#993500'
+    62: '#795100'
+    63: '#436400'
+    64: '#033900'
+    65: '#005735'
+    66: '#00547F'
+    67: '#0000FF'
+    68: '#00454F'
+    69: '#2500CC'
+    70: '#7F7F7F'
+    71: '#202020'
+    72: '#FF0000'
+    73: '#BDFF2D'
+    74: '#AFED06'
+    75: '#64FF09'
+    76: '#108B00'
+    77: '#00FF87'
+    78: '#00A9FF'
+    79: '#002AFF'
+    80: '#3F00FF'
+    81: '#7A00FF'
+    82: '#B21A7D'
+    83: '#402100'
+    84: '#FF4A00'
+    85: '#88E106'
+    86: '#72FF15'
+    87: '#00FF00'
+    88: '#3BFF26'
+    89: '#59FF71'
+    90: '#38FFCC'
+    91: '#5B8AFF'
+    92: '#3151C6'
+    93: '#877FE9'
+    94: '#D31DFF'
+    95: '#FF005D'
+    96: '#FF7F00'
+    97: '#B9B000'
+    98: '#90FF00'
+    99: '#835D07'
+    100: '#392B00'
+    101: '#144C10'
+    102: '#0D5038'
+    103: '#15152A'
+    104: '#16205A'
+    105: '#693C1C'
+    106: '#A8000A'
+    107: '#DE513D'
+    108: '#D86A1C'
+    109: '#FFE126'
+    110: '#9EE12F'
+    111: '#67B50F'
+    112: '#1E1E30'
+    113: '#DCFF6B'
+    114: '#80FFBD'
+    115: '#9A99FF'
+    116: '#8E66FF'
+    117: '#404040'
+    118: '#757575'
+    119: '#E0FFFF'
+    120: '#A00000'
+    121: '#350000'
+    122: '#1AD000'
+    123: '#074200'
+    124: '#B9B000'
+    125: '#3F3100'
+    126: '#B35F00'
+    127: '#4B1502'
+  aliases_from_protocol_examples:
+    'off': 0
+    red: 5
+    orange: 9
+  source_pages:
+  - 4
+  - 5
+sysex:
+  generic_device_specific_frame:
+    direction: bidirectional
+    template:
+    - 0xF0
+    - 0x47
+    - 0x7F
+    - 0x4E
+    - message_id
+    - data_length_msb
+    - data_length_lsb
+    - data_bytes...
+    - 0xF7
+    fixed_header:
+    - 0xF0
+    - 0x47
+    - 0x7F
+    - 0x4E
+    terminator: 0xF7
+    length_definition: Number of data bytes that follow the two length bytes.
+    source_page: 9
+  rgb_color_lighting:
+    direction: host_to_device
+    message_id: 0x24
+    template:
+    - 0xF0
+    - 0x47
+    - 0x7F
+    - 0x4E
+    - 0x24
+    - data_length_msb
+    - data_length_lsb
+    - records...
+    - 0xF7
+    record_size_bytes: 8
+    data_length_formula: 8 * number_of_records
+    record_fields:
+    - offset: 0
+      name: start_pad
+      documented_range:
+      - 0x00
+      - 0x3F
+      physical_pad_range:
+      - 0x00
+      - 0x27
+    - offset: 1
+      name: end_pad
+      documented_range:
+      - 0x00
+      - 0x3F
+      physical_pad_range:
+      - 0x00
+      - 0x27
+    - offset: 2
+      name: red_msb
+      range:
+      - 0x00
+      - 0x7F
+    - offset: 3
+      name: red_lsb
+      range:
+      - 0x00
+      - 0x7F
+    - offset: 4
+      name: green_msb
+      range:
+      - 0x00
+      - 0x7F
+    - offset: 5
+      name: green_lsb
+      range:
+      - 0x00
+      - 0x7F
+    - offset: 6
+      name: blue_msb
+      range:
+      - 0x00
+      - 0x7F
+    - offset: 7
+      name: blue_lsb
+      range:
+      - 0x00
+      - 0x7F
+    component_value_range:
+    - 0x00
+    - 0xFF
+    component_pair_encoding:
+      msb_formula: (component >> 7) & 0x01
+      lsb_formula: component & 0x7F
+      inferred_standard_split: true
+      note: The PDF states that each 8-bit component is expressed as MSB/LSB but does not print the split formula.
+    source_page: 8
+  device_enquiry:
+    protocol_name_in_document: standard MMC Device Enquiry
+    request:
+      direction: host_to_device
+      bytes:
+      - 0xF0
+      - 0x7E
+      - 0x00
+      - 0x06
+      - 0x01
+      - 0xF7
+      channel_to_inquire: 0x00
+    response:
+      direction: device_to_host
+      fixed_prefix:
+      - 0xF0
+      - 0x7E
+      data_length: 0x19
+      total_message_bytes: 35
+      fields:
+      - byte: 1
+        name: sysex_start
+        fixed: 0xF0
+      - byte: 2
+        name: non_realtime
+        fixed: 0x7E
+      - byte: 3
+        name: midi_channel
+        range:
+        - 0x00
+        - 0x7F
+      - byte: 4
+        name: inquiry_message
+        fixed: 0x06
+      - byte: 5
+        name: inquiry_response
+        fixed: 0x02
+      - byte: 6
+        name: manufacturer_id
+        fixed: 0x47
+      - byte: 7
+        name: product_model_id
+        fixed: 0x4E
+      - byte: 8
+        name: data_length_msb
+        fixed: 0x00
+      - byte: 9
+        name: data_length_lsb
+        fixed: 0x19
+      - byte: 10
+        name: version_major_msb
+      - byte: 11
+        name: version_major_lsb
+      - byte: 12
+        name: version_minor_msb
+      - byte: 13
+        name: version_minor_lsb
+      - byte: 14
+        name: device_id
+      - byte: 15
+        name: serial_digit_1
+      - byte: 16
+        name: serial_digit_2
+      - byte: 17
+        name: serial_digit_3
+      - byte: 18
+        name: serial_digit_4
+      - byte: 19
+        name: manufacturing_data_1
+      - byte: 20
+        name: manufacturing_data_2
+      - byte: 21
+        name: manufacturing_data_3
+      - byte: 22
+        name: manufacturing_data_4
+      - byte: 23
+        name: manufacturing_data_5
+      - byte: 24
+        name: manufacturing_data_6
+      - byte: 25
+        name: manufacturing_data_7
+      - byte: 26
+        name: manufacturing_data_8
+      - byte: 27
+        name: manufacturing_data_9
+      - byte: 28
+        name: manufacturing_data_10
+      - byte: 29
+        name: manufacturing_data_11
+      - byte: 30
+        name: manufacturing_data_12
+      - byte: 31
+        name: manufacturing_data_13
+      - byte: 32
+        name: manufacturing_data_14
+      - byte: 33
+        name: manufacturing_data_15
+      - byte: 34
+        name: manufacturing_data_16
+      - byte: 35
+        name: sysex_end
+        fixed: 0xF7
+    source_pages:
+    - 10
+    - 11
+  introduction:
+    required_before_device_specific_messages: true
+    exception: Device Enquiry may be sent first.
+    request:
+      direction: host_to_device
+      message_id: 0x60
+      data_length: 0x04
+      template:
+      - 0xF0
+      - 0x47
+      - 0x7F
+      - 0x4E
+      - 0x60
+      - 0x00
+      - 0x04
+      - 0x00
+      - version_major
+      - version_minor
+      - bugfix_level
+      - 0xF7
+      payload_fields:
+      - name: application_configuration_id
+        fixed: 0x00
+      - name: version_major
+        range:
+        - 0x00
+        - 0x7F
+      - name: version_minor
+        range:
+        - 0x00
+        - 0x7F
+      - name: bugfix_level
+        range:
+        - 0x00
+        - 0x7F
+      source_page: 12
+    response:
+      direction: device_to_host
+      message_id: 0x61
+      declared_data_length: 0x04
+      listed_payload_byte_count: 9
+      length_conflict: true
+      template_as_printed:
+      - 0xF0
+      - 0x47
+      - 0x7F
+      - 0x4E
+      - 0x61
+      - 0x00
+      - 0x04
+      - fader_1
+      - fader_2
+      - fader_3
+      - fader_4
+      - fader_5
+      - fader_6
+      - fader_7
+      - fader_8
+      - fader_9
+      - 0xF7
+      payload_fields_as_printed:
+      - fader_1
+      - fader_2
+      - fader_3
+      - fader_4
+      - fader_5
+      - fader_6
+      - fader_7
+      - fader_8
+      - fader_9
+      terminology_conflict: The device overview documents 8 knobs, while this response lists 9 fader values.
+      source_page: 13
+document_discrepancies:
+- id: rgb_led_port
+  pages:
+  - 1
+  - 2
+  - 3
+  - 14
+  - 15
+  details: Most sections use Port 1 for controls and LEDs, but the page 3 RGB behavior table says Port 0.
+  map_policy: Use Port 1 as preferred metadata and retain Port 0 as an explicit alternate documented value.
+- id: play_record_leds
+  pages:
+  - 2
+  - 7
+  - 15
+  details: Page 2 assigns Play a green LED and Record a red LED; page 15 says both have no LED. Page 7 lists Play but omits
+    Record in the bulk LED list.
+  map_policy: Mark both targets as document_conflict rather than asserting support.
+- id: stop_all_clips_bulk_led
+  pages:
+  - 2
+  - 7
+  - 15
+  details: Stop All Clips is marked LED None on pages 2 and 15 but appears in the page 7 single-LED bulk command list.
+  map_policy: Retain it only as a bulk-table anomaly.
+- id: single_led_note_range
+  pages:
+  - 2
+  - 6
+  - 15
+  details: Page 6 states button values 0x40-0x5B, while Record is 0x5D and Shift is 0x62. Shift is documented without an LED.
+  map_policy: Use explicit target lists instead of trusting the printed range.
+- id: introduction_response_length
+  page: 13
+  details: The response declares a four-byte payload but lists nine fader values.
+  map_policy: Preserve the declared length and listed fields separately; do not auto-correct.
+- id: introduction_response_controls
+  pages:
+  - 1
+  - 13
+  - 15
+  details: The device has 8 knobs, but the introduction response lists 9 faders.
+  map_policy: Preserve the protocol terminology and mark it as a conflict.
+- id: palette_duplicate_rows
+  page: 5
+  details: The printed table repeats palette rows 117-127. The map contains one entry for each velocity 0-127.
+  map_policy: Deduplicate by velocity without altering the printed RGB value.
+- id: ui_button_count
+  pages:
+  - 1
+  - 14
+  - 15
+  details: The overview states 20 UI buttons, while the control map names 19 physical buttons (17 with MIDI note values and
+    two octave buttons that send no Note On/Off). No twentieth button command is identified.
+  map_policy: Represent every named control and do not invent an additional button mapping.
+- id: typographical_hex_prefixes
+  pages:
+  - 9
+  - 10
+  - 12
+  details: Several cells print 00x4E or 00x7F. They are normalized to 0x4E and 0x7F.
+  map_policy: Normalize obvious typographical prefixes while recording this note.
