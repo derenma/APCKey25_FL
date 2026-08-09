@@ -2,31 +2,8 @@
 # url=https://forum.image-line.com/viewtopic.php?t=323673
 # Author: Matt Deren
 # Inspired by original script by Martijn Tromp: https://forum.image-line.com/viewtopic.php?f=1994&t=225886
-# Notes:
-# - This script as very little in common with the original and has morphed into its own beast.
-# - Tested with FL Studio 2026 v26.1.3 [build 5570]
-# - Built in VS Code. Hence, there are playright ignore messages to clean up linting warnings
-# - sysex for creating custom RGB pad colors simply doesn't work and my particular device does not respond to
-# 	the the required "Introduction Message". I suspect there is a specific version number that needs to be sent
-#	that is currently not documented. (Bruteforcing this may work, but also could be a massive waste of time)
-#	Snippets of my debug code, if anyone wants to give this a go:
-#	# Sysex Debug Bullshit ##############################################
-#	# TEST: RGB Color Lighting SysEx (pads 0x00-0x27, R=255 G=255 B=0)
-#	#self.buttons.all_pads_off(speed=0.00)
-#	#time.sleep(1)
-#	#self.buttons.all_pads_on(speed=0.00)
-#	#time.sleep(1)
-#	# TEST: MMC Device Enquiry (F0 7E 00 06 01 F7)
-#	#device.midiOutSysex(bytes([0xF0, 0x7E, 0x00, 0x06, 0x01, 0xF7]))
-#	#time.sleep(1)
-#	#device.midiOutSysex(bytes([0xF0, 0x47, 0x7F, 0x4E, 0x60, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00, 0xF7])) # Introduction Message
-#	#time.sleep(1)
-#	#print('sending color change')
-#	#device.midiOutSysex(bytes([0xF0, 0x47, 0x7F, 0x4E, 0x24, 0x00, 0x08, 0x00, 0x00, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0xF7]))
-#	#device.midiOutSysex(bytes([0xF0, 0x47, 0x7F, 0x4E, 0x24, 0x00, 0x08, 0x00, 0x00, 0x01, 0x7F, 0x00, 0x00, 0x01, 0x7F, 0xF7]))
-#	#####################################################################
-# Quick Start:
-#	...
+# This script has very little in common with the original and has morphed into its own beast.
+# See DEV_NOTES.md for compatibility notes, the SysEx RGB debug snippets, and other design-decision history.
 #########################################################################
 import sys
 import time
@@ -43,13 +20,18 @@ from typing import Optional
 import mapping
 
 # --- Debug logging -----------------------------------------------------------
-# Two levels, checked cheaply so callers don't need their own "if debug" guards
-# for the common case:
-#   STATUS  - general script status: init sequence, mode/transport changes,
-#             stub buttons firing. Readable at a glance, safe to leave on.
-#   VERBOSE - everything else: per-event tracing, raw device ID dumps, live-clip
-#             grid internals. Noisy — turn on only when actively debugging.
 class DebugLevel(Enum):
+	"""Verbosity levels for `log_status`/`log_verbose`, checked cheaply so
+	callers don't need their own "if debug" guards for the common case.
+
+	Attributes:
+		OFF: Nothing is logged.
+		STATUS: General script status: init sequence, mode/transport changes,
+			stub buttons firing. Readable at a glance, safe to leave on.
+		VERBOSE: Everything above, plus per-event tracing, raw device ID
+			dumps, and live-clip grid internals. Noisy — turn on only when
+			actively debugging.
+	"""
 	OFF = 0
 	STATUS = 1
 	VERBOSE = 2
@@ -57,12 +39,22 @@ class DebugLevel(Enum):
 DEBUG_LEVEL = DebugLevel.STATUS
 
 def log_status(msg):
+	"""Print `msg` if `DEBUG_LEVEL` is at least `DebugLevel.STATUS`.
+
+	Args:
+		msg: Message to print, prefixed with `[APCKey25]`.
+	"""
 	if DEBUG_LEVEL.value >= DebugLevel.STATUS.value:
 		print(f"[APCKey25] {msg}")
 
 def _caller_label():
-	"""'ClassName.method' for the caller of the caller of this function (i.e.
-	whoever called log_verbose), or just 'function' at module scope."""
+	"""Build a short label identifying who called `log_verbose`.
+
+	Returns:
+		str: `'ClassName.method'` for the caller of the caller of this
+		function (i.e. whoever called `log_verbose`), or just the bare
+		function name at module scope.
+	"""
 	frame = sys._getframe(2)
 	func_name = frame.f_code.co_name
 	self_obj = frame.f_locals.get("self")
@@ -71,16 +63,28 @@ def _caller_label():
 	return func_name
 
 def log_verbose(msg):
+	"""Print `msg` if `DEBUG_LEVEL` is at least `DebugLevel.VERBOSE`.
+
+	Args:
+		msg: Message to print. Automatically prefixed with the calling
+			method's `ClassName.method` (via `_caller_label`), so callers
+			don't need to restate where the message came from.
+	"""
 	if DEBUG_LEVEL.value >= DebugLevel.VERBOSE.value:
 		print(f"[APCKey25:verbose] {_caller_label()}: {msg}")
 
 class InitClass():
+	"""Tiny helper that logs script init and gives the device a moment to
+	settle before any MIDI is sent. Instantiated once at module scope."""
 	def __init__(self):
 		log_status("Init.")
 		time.sleep(1)
 
 
 class ControlKind(Enum):
+	"""Category of a physical control, used as part of `ControlStateStore`'s
+	lookup key so numerically-colliding IDs (see its docstring) don't clobber
+	each other's tracked state."""
 	KEY = "key"
 	KNOB = "knob"
 	PAD = "pad"
@@ -89,13 +93,23 @@ class ControlKind(Enum):
 
 @dataclass
 class ControlState:
-	"""Tracked state for one physical control (key, knob, pad, or function button)."""
+	"""Tracked state for one physical control (key, knob, pad, or function button).
+
+	Attributes:
+		id: Note/CC id of the control.
+		kind: The control's `ControlKind`.
+		active: Pressed/held (keys, pads, function buttons); unused for knobs.
+		value: Knob value (0-127); unused for everything else.
+		led_mode: Pad LED status byte, i.e. a `mapping.PAD_LED_FUNCTION` id
+			(pads/function buttons only).
+		color: Velocity-palette index 0-127 (pads/function buttons only).
+	"""
 	id: int
 	kind: ControlKind
-	active: bool = False   # pressed/held (keys, pads, function buttons); unused for knobs
-	value: int = 0          # knob value (0-127); unused for everything else
-	led_mode: Optional[int] = None  # pad LED status byte, i.e. mapping.PAD_LED_FUNCTION id (pads/function buttons only)
-	color: int = 0           # velocity-palette index 0-127 (pads/function buttons only)
+	active: bool = False
+	value: int = 0
+	led_mode: Optional[int] = None
+	color: int = 0
 
 
 class ControlStateStore:
@@ -115,31 +129,80 @@ class ControlStateStore:
 		self._controls = {}
 
 	def register(self, kind, control_id, **kwargs):
+		"""Create and store a fresh `ControlState` for `(kind, control_id)`.
+
+		Args:
+			kind: The control's `ControlKind`.
+			control_id: Note/CC id of the control.
+			**kwargs: Extra `ControlState` field overrides.
+		"""
 		self._controls[(kind, control_id)] = ControlState(id=control_id, kind=kind, **kwargs)
 
 	def get(self, kind, control_id):
+		"""Look up the tracked state for one control.
+
+		Args:
+			kind: The control's `ControlKind`.
+			control_id: Note/CC id of the control.
+
+		Returns:
+			ControlState | None: The tracked state, or `None` if
+			`(kind, control_id)` was never registered.
+		"""
 		return self._controls.get((kind, control_id))
 
 	def all(self, kind=None):
+		"""List tracked controls.
+
+		Args:
+			kind: If given, only return controls of this `ControlKind`.
+
+		Returns:
+			list[ControlState]: All matching tracked controls.
+		"""
 		if kind is None:
 			return list(self._controls.values())
 		return [c for c in self._controls.values() if c.kind == kind]
 
 	def set_active(self, kind, control_id, active):
+		"""Update a control's pressed/held state, if it's registered.
+
+		Args:
+			kind: The control's `ControlKind`.
+			control_id: Note/CC id of the control.
+			active: New pressed/held state.
+		"""
 		control = self._controls.get((kind, control_id))
 		if control is not None:
 			control.active = active
 
 	def set_value(self, kind, control_id, value):
+		"""Update a control's value (knobs), if it's registered.
+
+		Args:
+			kind: The control's `ControlKind`.
+			control_id: Note/CC id of the control.
+			value: New value.
+		"""
 		control = self._controls.get((kind, control_id))
 		if control is not None:
 			control.value = value
 
 	def set_led(self, kind, control_id, led_mode, color):
-		"""Record LED state for a pad/function button. Returns True if this
-		is a change from what's already tracked — callers use this to skip
-		sending redundant MIDI. Unregistered controls always report changed
-		(nothing to compare against), so the message is sent either way."""
+		"""Record LED state for a pad/function button.
+
+		Args:
+			kind: The control's `ControlKind`.
+			control_id: Note/CC id of the control.
+			led_mode: LED status byte (`mapping.PAD_LED_FUNCTION` id) being set.
+			color: Velocity-palette index being set.
+
+		Returns:
+			bool: `True` if this is a change from what's already tracked —
+			callers use this to skip sending redundant MIDI. Unregistered
+			controls always report changed (nothing to compare against), so
+			the message is sent either way.
+		"""
 		control = self._controls.get((kind, control_id))
 		if control is None:
 			return True
@@ -150,6 +213,17 @@ class ControlStateStore:
 
 
 def build_control_state_store():
+	"""Build and populate a `ControlStateStore` covering every physical
+	control on the device: pads, function buttons, knobs, and keybed keys.
+
+	Note:
+		Keybed key registration includes the range that numerically overlaps
+		pad note IDs (`0x00`-`0x27`) — see `ControlStateStore`'s docstring.
+
+	Returns:
+		ControlStateStore: Store with one entry per control, all at their
+		dataclass defaults.
+	"""
 	store = ControlStateStore()
 
 	for note_id in range(mapping.PAD_ID_START, mapping.PAD_ID_END):
@@ -165,17 +239,18 @@ def build_control_state_store():
 	for cc in range(0x30, 0x38):
 		store.register(ControlKind.KNOB, cc)
 
-	# Keybed keys. See the ControlStateStore docstring re: numeric overlap
-	# with pad note IDs in the 0x00-0x27 range.
 	for note_id in range(mapping.MIDI_KEY_START, mapping.MIDI_KEY_END):
 		store.register(ControlKind.KEY, note_id)
 
 	return store
 
-# Mirrors FL's own transport/playlist state (not physical controller state —
-# see ControlStateStore for that). refresh() is called once per incoming
-# event by OnMidiMsg/OnMidiIn; getters just return the cached values.
 class SessionState():
+	"""Mirrors FL's own transport/playlist state (not physical controller
+	state — see `ControlStateStore` for that).
+
+	`refresh()` is called once per incoming event by `OnMidiMsg`/`OnMidiIn`;
+	the getters below just return the cached values in between.
+	"""
 	def __init__(self):
 		self._isPlaying = 0
 		self._isRecording = 0
@@ -184,29 +259,72 @@ class SessionState():
 		log_verbose(f"isPlaying={self._isPlaying} isRecording={self._isRecording} isPerformance={self._isPerformance}")
 
 	def refresh(self):
-		"""Explicit resync with FL transport/playlist state. Call once per incoming event, not from inside getters."""
+		"""Explicit resync with FL transport/playlist state. Call once per
+		incoming event, not from inside the getters below."""
 		self._isPlaying = transport.isPlaying()
 		self._isRecording = transport.isRecording()
 		self._isPerformance = playlist.getPerformanceModeState()
 
 	def isPlaying(self, set=None):
+		"""Get, or force-set, the cached playing state.
+
+		Args:
+			set: If given, overwrite the cached value instead of just
+				reading it (used after this script itself changes transport
+				state, ahead of the next `refresh()`).
+
+		Returns:
+			int: The (possibly just-updated) cached playing state.
+		"""
 		if set is not None:
 			self._isPlaying = set
 		return(self._isPlaying)
 
 	def isRecording(self, set=None):
+		"""Get, or force-set, the cached recording state.
+
+		Args:
+			set: If given, overwrite the cached value instead of just
+				reading it.
+
+		Returns:
+			int: The (possibly just-updated) cached recording state.
+		"""
 		if set is not None:
 			self._isRecording = set
 		return(self._isRecording)
 
 	def isPerformance(self, set=None):
+		"""Get, or force-set, the cached performance-mode state.
+
+		Args:
+			set: If given, overwrite the cached value instead of just
+				reading it.
+
+		Returns:
+			int: The (possibly just-updated) cached performance-mode state.
+		"""
 		if set is not None:
 			self._isPerformance = set
 		return(self._isPerformance)
 
-# This can be used to get all of your controller information
 class DeviceHandler():
+	"""Owns incoming-event handling for every physical control.
+
+	`eventHandler` does a small amount of shared work (performance-mode
+	remap, active-state tracking) and then dispatches to one `_handle_*`
+	method per control via a lookup table built in `__init__`.
+	"""
 	def __init__(self, midiHandler, controls, buttons, state, controlStates, live):
+		"""
+		Args:
+			midiHandler: `MidiMessaging` instance used to send raw LED MIDI.
+			controls: `TransportHandler` instance for play/record/etc.
+			buttons: `PadLighting` instance for outgoing LED control.
+			state: Shared `SessionState` instance.
+			controlStates: Shared `ControlStateStore` instance.
+			live: `PerformanceMode` instance.
+		"""
 		self.midiHandler = midiHandler
 		self.buttons = buttons
 		self.state = state
@@ -238,6 +356,12 @@ class DeviceHandler():
 		numbers — see ControlStateStore's docstring. Anything in that range
 		is classified PAD, matching how this script has always treated it;
 		this hasn't been verified on hardware for genuine low keybed notes.
+
+		Args:
+			note_id: Incoming note or CC id.
+
+		Returns:
+			ControlKind: Best-effort classification of `note_id`.
 		"""
 		if note_id in mapping.SOUND_BUTTONS or note_id in mapping.TRACK_BUTTONS or note_id in mapping.SCENE_BUTTONS:
 			return ControlKind.FUNCTION_BUTTON
@@ -251,7 +375,11 @@ class DeviceHandler():
 		"""SHIFT is a toggle (press to engage, press again to release — it
 		ignores the physical release), so its ControlStateStore record is
 		managed explicitly in the SHIFT branch below rather than by the
-		generic press/release tracking at the top of eventHandler."""
+		generic press/release tracking at the top of eventHandler.
+
+		Returns:
+			bool: `True` if SHIFT is currently engaged.
+		"""
 		shift_id = mapping.SOUND_BUTTONS.id_for("shift")
 		control = self.controlStates.get(ControlKind.FUNCTION_BUTTON, shift_id)
 		return control.active if control is not None else False
@@ -265,20 +393,20 @@ class DeviceHandler():
 		computed performance note below — since mapping.PAD_TO_GRID_POSITION
 		is keyed by physical pad IDs.
 
-		Starting a clip is intentionally NOT done here via triggerLiveClip.
-		An earlier version tried calling triggerLiveClip(row, col, 0)
-		explicitly for starting too, but that broke starting for every row
-		on real hardware — flags=0 doesn't reproduce whatever raw-note
-		triggering actually does. Starting is left to FL's own note-based
-		triggering, but the note sent is now computed dynamically
-		(mapping.performance_note_for, in eventHandler) using the same
-		track_offset as this method, so starting also follows scrolling
-		instead of always targeting the original unscrolled track.
+		Starting a clip is intentionally NOT done here — see DEV_NOTES.md:
+		_handle_pad_performance_trigger for why.
 
-		getLiveBlockStatus(row, col, 0) returns a bitmask: filled=1,
-		scheduled=2, playing=4 (FL Studio MIDI scripting docs). Only the
-		playing bit matters here — a filled-but-not-yet-playing (scheduled)
-		block shouldn't be stopped by a press, it should start.
+		Args:
+			event: Incoming FL MIDI event. Mutated in place (`event.handled`
+				is set) if this press stops a playing clip; otherwise left
+				untouched.
+
+		Note:
+			`getLiveBlockStatus(row, col, 0)` returns a bitmask: filled=1,
+			scheduled=2, playing=4 (FL Studio MIDI scripting docs). Only the
+			playing bit matters here — a filled-but-not-yet-playing
+			(scheduled) block shouldn't be stopped by a press, it should
+			start.
 		"""
 		if event.data2 == 0:
 			return  # only act on press, not release
@@ -291,15 +419,28 @@ class DeviceHandler():
 		track = row + self.live.track_offset  # physical row -> currently-scrolled-to playlist track
 		status = playlist.getLiveBlockStatus(track, col, 0)
 		if status & 4:
-			# blockNum=-1 + TLC_Fill stops whatever's currently playing on
-			# this track/row (only one block per row can play at a time, so
-			# this is equivalent to stopping this specific block).
+			# blockNum=-1 — see DEV_NOTES.md: _handle_pad_performance_trigger.
 			playlist.triggerLiveClip(track, -1, midi.TLC_Fill)
 			log_status(f"Stopped live clip: row={row} track={track} col={col} pad={event.data1}")
 			event.handled = True
 
-	# knobAdjust normalizes velocity data that is "built-in" to knob turns.
 	def knobAdjust(self, event):
+		"""Normalize the "built-in" relative-encoder velocity data a knob
+		turn sends into an absolute per-knob value.
+
+		Values just above 100 mean "turned down" (encoded as 127 minus the
+		delta), values just above 0 mean "turned up" (the delta itself).
+		This accumulates those deltas into a per-knob absolute value clamped
+		to 1-128, stored in `self.knobs`.
+
+		Args:
+			event: Incoming FL MIDI event; `data1` selects the knob
+				(`0x30`-`0x37`), `data2` carries the relative delta.
+
+		Returns:
+			The same `event`, with `data2` overwritten to the knob's new
+			absolute value.
+		"""
 		knob = event.data1 - 48
 		value = event.data2
 
@@ -323,6 +464,20 @@ class DeviceHandler():
 		return(event)
 
 	def eventHandler(self, event):
+		"""Entry point for every incoming note/CC event on this device.
+
+		In performance mode, pad presses are remapped to FL's expected
+		live-clip trigger notes and returned immediately (never dispatched
+		below — see the inline comment on the collision this used to cause
+		with the knob CCs). Otherwise, this tracks press/release state for
+		non-knob, non-SHIFT controls and dispatches to the bound `_handle_*`
+		method for `event.data1`, if any.
+
+		Args:
+			event: Incoming FL MIDI event, mutated in place. Callers must
+				not reassign `event` from this method's (non-existent)
+				return value.
+		"""
 		# Map the pads if in performance mode
 		if self.state.isPerformance():
 			log_verbose(f"performance-mode remap: shift={self._shift_active()} data1={event.data1} data2={event.data2}")
@@ -332,26 +487,13 @@ class DeviceHandler():
 				row, col = grid_pos
 				track = row + self.live.track_offset
 				event.data1 = mapping.performance_note_for(track, col)
-				# This note originated from a performance-mode pad press and
-				# must pass through to FL untouched as a plain note — it
-				# must NEVER fall into the dispatch lookup below, even if
-				# the computed note value numerically collides with a knob/
-				# button ID (e.g. unscrolled row 5 computes to notes 48-55,
-				# which is exactly the CC range 0x30-0x37 used by the 8
-				# physical knobs). That collision used to hijack row-5 pad
-				# presses into _handle_knob, mangling event.data2 and
-				# marking the event handled, which silently ate the note
-				# before it ever reached FL. Confirmed via verbose logs on
-				# real hardware.
+				# Must NEVER fall into the dispatch lookup below — see DEV_NOTES.md: eventHandler
+				# (performance-mode remap & the row-5/knob collision bug) for why.
 				return
 			# Not marked handled: this only remaps event.data1 before
 			# dispatch below decides what (if anything) to do with it.
 
-		# Track press/release state for everything except knobs (their
-		# value is recorded separately, post-decode, in _handle_knob —
-		# "active" doesn't map cleanly onto a relative encoder) and SHIFT
-		# (a toggle, managed explicitly in _handle_shift — see
-		# _shift_active).
+		# Knobs/SHIFT excluded — see DEV_NOTES.md: eventHandler.
 		control_kind = self._classify_control(event.data1)
 		if control_kind != ControlKind.KNOB and event.data1 != mapping.SOUND_BUTTONS.id_for("shift"):
 			self.controlStates.set_active(control_kind, event.data1, event.data2 != 0)
@@ -361,10 +503,17 @@ class DeviceHandler():
 			handler(event)
 
 	def _handle_shift(self, event):
-		# SHIFT — toggle: press to engage, press again to release (the
-		# physical release/note-off is ignored, matching the original
-		# behavior). Tracked via ControlStateStore instead of a separate
-		# flag so there's one place controller state lives.
+		"""Handle the SHIFT button.
+
+		SHIFT is a toggle: press to engage, press again to release. The
+		physical release/note-off is ignored by design (matches the
+		original behavior); state lives in `ControlStateStore` rather than
+		a separate flag so there's one place controller state lives.
+
+		Args:
+			event: Incoming FL MIDI event; only full presses (`data2 == 127`)
+				toggle state. Always marked handled.
+		"""
 		if event.data2 == 127:
 			if self._shift_active():
 				self.controlStates.set_active(ControlKind.FUNCTION_BUTTON, event.data1, False)
@@ -377,13 +526,16 @@ class DeviceHandler():
 				self.buttons.knob_ctrl_bright()
 				#self.buttons.all_funcs_flash()
 
-		# event.handled=True is provisional: set for now so FL doesn't also
-		# pass shift/play/record/knobs through as raw MIDI on top of the
-		# script's own handling. Revisit after testing on hardware — may
-		# need to be per-event-type instead of blanket.
+		# event.handled=True is provisional — see DEV_NOTES.md: _handle_shift.
 		event.handled = True
 
 	def _handle_play(self, event):
+		"""Handle the PLAY button: toggle FL transport playback.
+
+		Args:
+			event: Incoming FL MIDI event; only full presses (`data2 == 127`)
+				act. Always marked handled.
+		"""
 		if event.data2 == 127:
 			if self.state.isPlaying() == 1:
 				self.controls.togglePlay()
@@ -394,19 +546,29 @@ class DeviceHandler():
 		event.handled = True
 
 	def _handle_record(self, event):
+		"""Handle the REC button: toggle FL transport recording.
+
+		Args:
+			event: Incoming FL MIDI event; only full presses (`data2 == 127`)
+				act. Always marked handled.
+		"""
 		if event.data2 == 127:
-			# toggleRecord() calls transport.record() and resyncs
-			# self.state from FL itself — call it on every press instead
-			# of only when turning recording on. Only calling it when
-			# turning recording on would never tell FL to stop recording
-			# when pressed while already recording.
+			# Called on every press — see DEV_NOTES.md: _handle_record.
 			self.controls.toggleRecord()
 		event.handled = True
 
 	def _handle_track_button(self, event):
-		# SHIFT + up/down, in performance mode: scroll the visible 5-row
-		# pad window up/down the playlist track list. Everything else
-		# about the track buttons is still a stub (see below).
+		"""Handle one of the 8 track-select buttons.
+
+		In performance mode, SHIFT + up/down scrolls the visible 5-row pad
+		window up/down the playlist track list. Everything else about the
+		track buttons is still a stub — shift-mode names are already mapped
+		in `mapping.py` (`TRACK_BUTTONS_SHIFT`) for whenever this gets
+		implemented.
+
+		Args:
+			event: Incoming FL MIDI event. Always marked handled.
+		"""
 		if self.state.isPerformance() and self._shift_active():
 			name = mapping.TRACK_BUTTONS_SHIFT[event.data1]
 			if name in ("up", "down"):
@@ -424,17 +586,30 @@ class DeviceHandler():
 		event.handled = True
 
 	def _handle_scene_button(self, event):
-		# Stubbed for now — see _handle_track_button.
+		"""Handle one of the 5 scene-launch buttons. Stubbed — see
+		`_handle_track_button`.
+
+		Args:
+			event: Incoming FL MIDI event. Always marked handled.
+		"""
 		name = mapping.SCENE_BUTTONS_SHIFT[event.data1] if self._shift_active() else mapping.SCENE_BUTTONS[event.data1]
 		log_status(f"[stub] scene button '{name}' ({hex(event.data1)}) not implemented")
 		event.handled = True
 
 	def _handle_knob(self, event):
+		"""Handle a knob CC: decode its relative delta and record the
+		resulting absolute value.
+
+		Args:
+			event: Incoming FL MIDI event. Always marked handled.
+		"""
 		self.knobAdjust(event)
 		self.controlStates.set_value(ControlKind.KNOB, event.data1, event.data2)
 		event.handled = True
 
 	def deviceInfo(self):
+		"""Log device name/assignment status, and — at `VERBOSE` debug level
+		only — the raw device ID byte dump via `parseDevID`."""
 		log_status(f"Device Info: name={device.getName()!r} assigned={device.isAssigned()}")
 
 		if DEBUG_LEVEL.value < DebugLevel.VERBOSE.value:
@@ -458,28 +633,37 @@ class DeviceHandler():
 		self.parseDevID()
 
 	def parseDevID(self):
+		"""Log each byte of `device.getDeviceID()` alongside its label from
+		`self.dIdMap`, at `VERBOSE` debug level."""
 		mmcOffset = 5
 		for idx,c in enumerate(device.getDeviceID()):
 			log_verbose(f"raw device ID byte {idx:02d}/{idx+1+mmcOffset:02d} ({self.dIdMap[idx]}): 0x{c:02X}")
 
-# Our transport class
 class TransportHandler():
+	"""Play/record/loop/fast-forward/rewind wrappers around FL's `transport`
+	module, kept in sync with the shared `SessionState`."""
 	def __init__(self, state):
 		self.state = state
 		self.state.refresh()
 
 	def toggleLoopMode(self):
+		"""Toggle FL's song/pattern loop mode, but only if playback isn't
+		already running."""
 		if (transport.isPlaying() == 0): #Only toggle loop mode if not already playing
 			transport.setLoopMode()
 			log_status("Song/Pattern Mode toggled")
 
 	def pressFastForward(self):
+		"""Fast-forward FL's transport."""
 		transport.fastForward(2)
 
 	def pressRewind(self):
+		"""Rewind FL's transport."""
 		transport.rewind(2)
 
 	def togglePlay(self):
+		"""Start or stop FL playback (whichever is opposite the current
+		state), and update `SessionState` to match."""
 		if (transport.isPlaying() == 0):
 			transport.start()
 			self.state.isPlaying(set=1)
@@ -489,6 +673,13 @@ class TransportHandler():
 		log_verbose(f"isPlaying={transport.isPlaying()}")
 
 	def toggleRecord(self):
+		"""Start FL recording, if playback isn't already running.
+
+		If playback is already running, recording is not started — the
+		state is force-cleared instead. `SessionState` is resynced from FL
+		after a successful toggle so `isRecording`/`isPlaying`/`isPerformance`
+		all reflect FL's actual state.
+		"""
 		if (transport.isPlaying() == 0): # Only enable recording if not already playing
 			transport.record()
 			self.state.refresh()  # resync isRecording (and isPlaying/isPerformance) from FL after the toggle
@@ -498,6 +689,19 @@ class TransportHandler():
 			log_status("Currently Playing; Canceled Record Command")
 
 class PadLighting():
+	"""All outgoing LED control, for both the 5x8 pad grid and the
+	track/scene function buttons.
+
+	Note:
+		The single-pad methods below (`pad_color`, `pad_pressed`,
+		`pad_unpressed`, `pad_led_on`, `pad_led_off`) diff against
+		`ControlStateStore` and skip sending when nothing would change —
+		these are the natural call sites for that (e.g. `PerformanceMode`
+		redraws the whole live-clip grid on every playlist update, one pad
+		at a time). The bulk methods (`cycle_pads` and friends) always send,
+		since their point is guaranteed uniform state across every pad, not
+		traffic reduction.
+	"""
 	def __init__(self, midiHandler, state, controlStates):
 		self.midiHandler = midiHandler
 		self.state = state
@@ -517,17 +721,26 @@ class PadLighting():
 		self.all_funcs_on()
 
 	def cycle_pads(self, command, value, speed=0.05):
-		# Bulk pad sweep: always sends, doesn't diff against tracked state —
-		# the point of this method is guaranteed uniform state across every
-		# pad, not traffic reduction. It also keeps the store in sync so the
-		# single-pad diffed methods below (pad_led_on/off etc.) have an
-		# accurate baseline afterward.
+		"""Send the same LED status byte/velocity to every pad.
+
+		Always sends, doesn't diff against tracked state — the point of
+		this method is guaranteed uniform state across every pad, not
+		traffic reduction. It also keeps the store in sync so the
+		single-pad diffed methods below (pad_led_on/off etc.) have an
+		accurate baseline afterward.
+
+		Args:
+			command: LED status byte (`mapping.PAD_LED_FUNCTION` id).
+			value: Velocity-palette index.
+			speed: Seconds to sleep between pads.
+		"""
 		for a in range(mapping.PAD_ID_START, mapping.PAD_ID_END):
 			device.midiOutMsg(command + (a << 8) + (value << 16))
 			self.controlStates.set_led(ControlKind.PAD, a, command, value)
 			time.sleep(speed)
 
 	def _set_func_buttons(self, value):
+		"""Send `value` to every track/scene function button LED."""
 		mode = mapping.PAD_LED_FUNCTION.id_for("bright_0")
 		for key in mapping.TRACK_BUTTONS.by_id:
 			self.midiHandler.sendMessage(mode, key, value)
@@ -538,41 +751,63 @@ class PadLighting():
 			self.controlStates.set_led(ControlKind.FUNCTION_BUTTON, key, mode, value)
 
 	def _set_knob_ctrl_dim(self, value):
+		"""Send `value` to the 4 knob-control button LEDs at dim brightness."""
 		mode = mapping.PAD_LED_FUNCTION.id_for("bright_4")
 		for key in mapping.KNOB_CTRL.by_id:
 			self.midiHandler.sendMessage(mode, key, value)
 			self.controlStates.set_led(ControlKind.FUNCTION_BUTTON, key, mode, value)
 
 	def _set_knob_ctrl_bright(self, value):
+		"""Send `value` to the 4 knob-control button LEDs at full brightness."""
 		mode = mapping.PAD_LED_FUNCTION.id_for("bright_0")
 		for key in mapping.KNOB_CTRL.by_id:
 			self.midiHandler.sendMessage(mode, key, value)
 			self.controlStates.set_led(ControlKind.FUNCTION_BUTTON, key, mode, value)
 
 	def all_funcs_on(self):
+		"""Turn on every track/scene function button LED."""
 		self._set_func_buttons(0x01)
 
 	def all_funcs_off(self):
+		"""Turn off every track/scene function button LED."""
 		self._set_func_buttons(0x00)
 
 	def all_funcs_flash(self):
+		"""Set every track/scene function button LED to flash."""
 		self._set_func_buttons(0x02)
 
 	def all_funcs_stop_flash(self):
+		"""Stop every track/scene function button LED from flashing (back
+		to solid on)."""
 		self._set_func_buttons(0x01)
 
 	def knob_ctrl_dim(self):
+		"""Dim the 4 knob-control button LEDs (SHIFT engaged)."""
 		self._set_knob_ctrl_dim(0x00)
 
 	def knob_ctrl_bright(self):
+		"""Brighten the 4 knob-control button LEDs (SHIFT released)."""
 		self._set_knob_ctrl_dim(0x01)
 
 	def all_pads_on(self, speed=0.05):
+		"""Turn on every pad LED (no color, no extra brightness).
+
+		Args:
+			speed: Seconds to sleep between pads.
+		"""
 		log_verbose(f"speed={speed}")
 		# no bright, no color
 		self.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x00, speed=speed)
 
 	def animate_pads_on(self, speed=0.1):
+		"""Light pads one at a time in `mapping.START_PATTERN` order, for
+		the power-on animation.
+
+		Args:
+			speed: Unused — kept for call-site symmetry with
+				`animate_pads_off`; the per-pad delay is currently
+				hardcoded below.
+		"""
 		mode = mapping.PAD_LED_FUNCTION.id_for("bright_5")
 		for row in mapping.START_PATTERN:
 			for key in row:
@@ -581,6 +816,12 @@ class PadLighting():
 				time.sleep(0.02)
 
 	def animate_pads_off(self, speed=0.1):
+		"""Turn off pads one at a time in `mapping.START_PATTERN` order, for
+		the shutdown animation.
+
+		Args:
+			speed: Unused — see `animate_pads_on`.
+		"""
 		mode = mapping.PAD_LED_FUNCTION.id_for("bright_5")
 		for row in mapping.START_PATTERN:
 			for key in row:
@@ -589,61 +830,107 @@ class PadLighting():
 				time.sleep(0.02)
 
 	def all_pads_off(self, speed=0.05):
+		"""Turn off every pad LED (no color, no extra brightness).
+
+		Args:
+			speed: Seconds to sleep between pads.
+		"""
 		# no bright, no color
 		log_verbose(f"speed={speed}")
 		self.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x00, speed=speed)
 
 	def all_pads_dim(self, color, speed=0.05):
+		"""Set every pad LED to `color` at the default dim brightness.
+
+		Args:
+			color: Velocity-palette index.
+			speed: Seconds to sleep between pads.
+		"""
 		log_verbose(f"color={color} speed={speed}")
 		self.cycle_pads(self.initialDim, color, speed=speed)
 
-	# The single-pad methods below diff against the tracked state and skip
-	# sending when nothing would change — these are the natural call sites
-	# for that (e.g. PerformanceMode redraws the whole live-clip grid on
-	# every playlist update, one pad at a time).
-
 	def pad_color(self, key, color):
+		"""Set one pad to `color` at bright_4, if different from its
+		currently tracked state.
+
+		Args:
+			key: Pad note id.
+			color: Velocity-palette index.
+		"""
 		mode = mapping.PAD_LED_FUNCTION.id_for("bright_4")
 		if self.controlStates.set_led(ControlKind.PAD, key, mode, color):
 			self.midiHandler.sendMessage(mode, key, color)
 
 	def pad_pressed(self, key):
+		"""Light one pad to indicate it's pressed, if different from its
+		currently tracked state.
+
+		Args:
+			key: Pad note id.
+		"""
 		mode = mapping.PAD_LED_FUNCTION.id_for("bright_4")
 		if self.controlStates.set_led(ControlKind.PAD, key, mode, 10):
 			self.midiHandler.sendMessage(mode, key, 10)
 
 	def pad_unpressed(self, key):
+		"""Return one pad to its default dim state, if different from its
+		currently tracked state.
+
+		Args:
+			key: Pad note id.
+		"""
 		if self.controlStates.set_led(ControlKind.PAD, key, self.initialDim, self.initialColor):
 			self.midiHandler.sendMessage(self.initialDim, key, self.initialColor)
 
 	def pad_led_on(self, mode, key, color):
+		"""Set one pad's LED status/color, if different from its currently
+		tracked state.
+
+		Args:
+			mode: LED status byte (`mapping.PAD_LED_FUNCTION` id).
+			key: Pad note id.
+			color: Velocity-palette index.
+		"""
 		if self.controlStates.set_led(ControlKind.PAD, key, mode, color):
 			self.midiHandler.sendMessage(mode, key, color)
 
 	def pad_led_off(self, key):
+		"""Return one pad to its default dim state, if different from its
+		currently tracked state. Alias of `pad_unpressed`, used by
+		`PerformanceMode` for empty grid cells.
+
+		Args:
+			key: Pad note id.
+		"""
 		if self.controlStates.set_led(ControlKind.PAD, key, self.initialDim, self.initialColor):
 			self.midiHandler.sendMessage(self.initialDim, key, self.initialColor)
 
 
 class PerformanceMode:
+	"""Mirrors FL's live-clip launch grid onto the pad LEDs, and owns the
+	track-scroll window used to translate between physical pad rows and
+	playlist tracks.
+
+	Attributes:
+		track_offset: How many tracks the visible 5-row pad window is
+			scrolled down by. Pad grid row `idx` (1-5) always displays
+			playlist track `idx + track_offset`. `0` = default
+			(rows 1-5 -> tracks 1-5).
+	"""
 	def __init__(self, lighting, state):
+		"""
+		Args:
+			lighting: `PadLighting` instance used to draw the grid.
+			state: Shared `SessionState` instance.
+		"""
 		self.lighting = lighting
 		self.state = state
 		self.pos = mapping.LIVE_GRID_PAD_POSITIONS
 		self._first_run = True
-
-		# How many tracks the visible 5-row pad window is scrolled down by.
-		# Pad grid row `idx` (1-5) always displays playlist track
-		# `idx + track_offset`. 0 = default (rows 1-5 -> tracks 1-5).
 		self.track_offset = 0
 
-		# select_tracks() is NOT called here: playlist.selectTrack()/
-		# deselectAll() raise "Operation unsafe at current time" when called
-		# from module-level construction (script import time) — confirmed
-		# on real hardware. Read-only playlist calls (getLiveBlockStatus
-		# etc., used below) are fine at this point; only the initial track
-		# selection needs to wait for OnInit(), which FL calls once the
-		# script has actually finished loading. See module-level OnInit().
+		# select_tracks() is NOT called here — see DEV_NOTES.md:
+		# PerformanceMode.__init__ for why. See module-level OnInit().
 
 		# If script restart, this should update the LEDs
 		self.OnUpdateLiveMode(0)
@@ -658,8 +945,16 @@ class PerformanceMode:
 			playlist.selectTrack(idx + self.track_offset)
 
 	def scroll(self, delta):
-		"""Shift the visible track window by `delta` rows (+1 = down, -1 =
-		up). Clamped so the topmost visible track can never go below 1."""
+		"""Shift the visible track window by `delta` rows and redraw.
+
+		Args:
+			delta: `+1` to scroll down, `-1` to scroll up.
+
+		Note:
+			Clamped so the topmost visible track can never go below 1. If
+			the offset doesn't actually change (e.g. scrolling up while
+			already at the top), nothing is reselected or redrawn.
+		"""
 		new_offset = max(0, self.track_offset + delta)
 		if new_offset == self.track_offset:
 			return
@@ -669,6 +964,14 @@ class PerformanceMode:
 		self.OnUpdateLiveMode(self.track_offset)
 
 	def debugLiveMode(self, value):
+		"""Dump extra pattern/track/live-status details via `log_verbose`,
+		at `VERBOSE` debug level only. Diagnostic aid, not required for
+		normal operation.
+
+		Args:
+			value: Unused — accepted for symmetry with `OnUpdateLiveMode`,
+				which calls this.
+		"""
 		if DEBUG_LEVEL.value < DebugLevel.VERBOSE.value:
 			return()
 
@@ -693,18 +996,30 @@ class PerformanceMode:
 
 	# This needs a serious cleanup.
 	def OnUpdateLiveMode(self, value):
+		"""Redraw every pad LED from FL's current live-clip grid state.
+
+		Called by FL (via the module-level `OnUpdateLiveMode` callback)
+		whenever the live-clip grid changes, and once at startup/scroll to
+		force a full redraw.
+
+		Args:
+			value: Event value passed through from FL; only used for
+				logging here.
+
+		Note:
+			`idx` is the physical pad row, top to bottom (fixed, 1-5).
+			`track` is the playlist track currently displayed on that row
+			(shifts with `track_offset`; `idx` alone is never passed to
+			`playlist.*` — only to `self.pos`, which addresses physical
+			pads and doesn't move when scrolling). `blockNum` runs left to
+			right.
+		"""
 		if self._first_run:
 			self._first_run = False
 			log_status("Performance Mode Init!")
 
 		self.debugLiveMode(value)
 
-		# idx      = physical pad row, top -> bottom (fixed, 1-5)
-		# track    = playlist track currently displayed on that row
-		#            (shifts with track_offset; idx alone is never passed
-		#            to playlist.* — only to self.pos, which addresses
-		#            physical pads and doesn't move when scrolling)
-		# blocknum = left -> right
 		for idx in range(1, 6):
 			track = idx + self.track_offset
 			for blockNum in range(0, 8):
@@ -723,7 +1038,15 @@ class PerformanceMode:
 		log_verbose(f"event={value}")
 
 class MidiMessaging():
+	"""Thin helper for sending short (non-SysEx) MIDI-out messages."""
 	def sendMessage(self, command, key, value):
+		"""Send a short MIDI-out message.
+
+		Args:
+			command: Status byte (e.g. a `mapping.PAD_LED_FUNCTION` id).
+			key: Data byte 1 (note/CC number).
+			value: Data byte 2 (velocity/value).
+		"""
 		device.midiOutMsg((command) + (key << 8) + (value << 16))
 
 start = InitClass()
@@ -736,43 +1059,83 @@ live = PerformanceMode(lighting, state)
 kbd = DeviceHandler(midiHandler, controls, lighting, state, controlStates, live)
 
 def OnUpdateLiveMode(event):
+	"""FL callback: forwarded to `PerformanceMode.OnUpdateLiveMode`.
+
+	Args:
+		event: Event value passed through from FL.
+	"""
 	log_verbose(f"event={event}")
 	live.OnUpdateLiveMode(event)
 
 def OnControlChange(event):
+	"""FL callback: currently unused.
+
+	Args:
+		event: Incoming FL MIDI event.
+	"""
 	pass
 
-# FL Studio unifies both of the device's physical MIDI ports into these two
-# callbacks itself; the script doesn't need to know which physical port an
-# event came from. The isPerformance() gate below is intentional and stays as
-# the single dispatch mechanism — confirmed sufficient, not a gap to fix.
+# See DEV_NOTES.md: OnMidiMsg / OnMidiIn for the dual-port dispatch rationale.
 def OnMidiMsg(event):
-	# eventHandler mutates event in place and returns nothing — don't
-	# reassign `event` from its result (that would make it None).
+	"""FL callback for one of the device's two physical MIDI ports.
+
+	Only dispatches into `DeviceHandler.eventHandler` while performance mode
+	is active — see `OnMidiIn` for the complementary standard-mode port.
+
+	Args:
+		event: Incoming FL MIDI event, mutated in place by `eventHandler`.
+			Don't reassign `event` from `eventHandler`'s (non-existent)
+			return value.
+	"""
 	state.refresh()
 	if state.isPerformance():
 		kbd.eventHandler(event)
 		log_verbose(f"data1={event.data1} data2={event.data2}")
 
 def OnMidiIn(event):
+	"""FL callback for the device's other physical MIDI port.
+
+	Only dispatches into `DeviceHandler.eventHandler` while performance mode
+	is *not* active — see `OnMidiMsg` for the complementary performance-mode
+	port.
+
+	Args:
+		event: Incoming FL MIDI event, mutated in place by `eventHandler`.
+	"""
 	state.refresh()
 	if not state.isPerformance():
 		kbd.eventHandler(event)
 
 def OnMidiOutMsg(event):
+	"""FL callback: currently unused.
+
+	Args:
+		event: Outgoing FL MIDI event.
+	"""
 	pass
 
 def OnSysEx(event):
+	"""FL callback: log any incoming SysEx message.
+
+	Args:
+		event: Incoming FL SysEx event.
+	"""
 	log_status(f"** onSysEx: {event}")
 
 def OnInit():
+	"""FL callback: called once the script has finished loading.
+
+	Performs the initial playlist track selection deferred from
+	`PerformanceMode.__init__` — `playlist.selectTrack()`/`deselectAll()`
+	are unsafe to call during module-level construction (script import
+	time), but are fine here.
+	"""
 	log_status("onInit")
-	# Deferred from PerformanceMode.__init__ — playlist.selectTrack()/
-	# deselectAll() are unsafe to call during module-level construction
-	# (script import time), but are fine here.
 	live.select_tracks()
 
 def OnDeInit():
+	"""FL callback: called when the script is being unloaded. Turns off the
+	function button LEDs."""
 	log_status("onDeInit")
 	lighting.all_funcs_off()
 	#lighting.animate_pads_off()
