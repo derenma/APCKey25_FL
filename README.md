@@ -4,20 +4,26 @@ FL Studio MIDI scripting reference: https://www.image-line.com/fl-studio-learnin
 
 This is an FL Studio hardware device script for the Akai APC Key 25 mk2. It lives in FL Studio's `Settings/Hardware/APCKey25mk2` folder and is loaded automatically by FL Studio when the device is assigned as a MIDI controller.
 
+Author: Matt Deren. Inspired by the original script by Martijn Tromp: https://forum.image-line.com/viewtopic.php?f=1994&t=225886
+
+Forum thread: https://forum.image-line.com/viewtopic.php?t=323673
+
 Github: https://github.com/derenma/APCKey25_FL
 
 ## Files
 
-- **`device_APCKey25mk2V3.py`** — the active script. This is what FL Studio loads.
-- **`mapping.py`** — all MIDI note/CC lookup tables (buttons, pad LED behavior codes, pad position tables). Plain data, no FL Studio API dependency, imported by the main script.
-- **`device_APCKey25mk2V2.py`** — legacy version, kept for reference only. **Do not edit.**
-- **`akai_apc_key_25.yaml`** — protocol reference data (pad layout, LED velocity palette, SysEx frame formats) used by the `dev/` tooling, not loaded by the FL Studio script itself.
-- **`dev/`** — a standalone command-line MIDI tester (`dev/standalone_apckey25.py`) used to probe device behavior outside FL Studio, plus protocol docs. Not part of the FL Studio script; see `dev/README.md`.
-- **`v3_REFACTOR_PLAN.md`** — working notes from the V2 → V3 refactor: known bugs fixed, design decisions, and what's still unverified on real hardware.
+- **`device_APCKey25mk2.py`** — the active script. This is what FL Studio loads.
+- **`mapping.py`** — all MIDI note/CC lookup tables (buttons, pad LED behavior codes, pad position tables, performance-mode grid mapping). Plain data, no FL Studio API dependency, imported by the main script.
+- **`akai_apc_key_25.yaml`** — protocol reference data (pad layout, LED velocity palette, SysEx frame formats). Not loaded by the script itself; kept as documentation and cross-referenced from `docs/LED_COLOR_SCHEME.md`.
+- **`docs/`** — protocol reference material:
+  - `docs/APC Key 25 mk2 - Communication Protocol - v1.1.pdf` — the manufacturer's protocol document.
+  - `docs/LED_COLOR_SCHEME.md` — writeup of how pad/button LED color and brightness are controlled via the Note On velocity palette, cross-referencing `akai_apc_key_25.yaml`.
 
 ## How FL Studio loads this script
 
-FL Studio calls a fixed set of module-level functions as callbacks (`OnInit`, `OnMidiIn`, `OnMidiMsg`, `OnDeInit`, etc. — see the MIDI scripting reference above). `device_APCKey25mk2V3.py` builds its object graph (state, lighting, event handling) once at import time, then those callbacks forward into it. There's no separate "install" step — FL Studio just needs this file present in its `Hardware/APCKey25mk2` settings folder with the device assigned to it in MIDI Settings.
+FL Studio calls a fixed set of module-level functions as callbacks (`OnInit`, `OnMidiIn`, `OnMidiMsg`, `OnDeInit`, etc. — see the MIDI scripting reference above). `device_APCKey25mk2.py` builds its object graph (state, lighting, event handling) once at import time, then those callbacks forward into it. There's no separate "install" step — FL Studio just needs this file present in its `Hardware/APCKey25mk2` settings folder with the device assigned to it in MIDI Settings.
+
+The device exposes two physical MIDI ports, but FL Studio unifies them before this script ever sees an event. Routing between the two entry-point callbacks is driven by mode instead: `OnMidiMsg` only dispatches into `DeviceHandler.eventHandler` while performance mode is active; `OnMidiIn` only dispatches while it isn't. Both refresh `SessionState` from FL first, so the mode check is always current.
 
 ## Core building blocks
 
@@ -37,7 +43,7 @@ This is the default mode: FL's playlist is **not** in Performance Mode (`playlis
 - **Keybed keys** pass through to FL untouched (normal MIDI note input) — the script doesn't intercept them.
 - **Pads** (note IDs `0x00`–`0x27`, the 5x8 grid) are **not** remapped or specially handled in standard mode; presses pass through as regular notes, same as the keybed. There is currently no standard-mode pad→action behavior implemented.
 - **Knobs** (CC `0x30`–`0x37`, the 8 knobs above the pads) send relative encoder values. `DeviceHandler.knobAdjust` decodes the relative delta into an absolute 1–128 value per knob and writes it to `ControlStateStore`.
-- **SHIFT** (`0x62`) is a **toggle**, not a hold: press once to engage (flashes the track/scene function-button LEDs), press again to release. The physical release (note-off) is ignored by design — this matches the original V2 behavior and was an intentional decision, not a bug. Shift state is tracked in `ControlStateStore` via `DeviceHandler._shift_active()`.
+- **SHIFT** (`0x62`) is a **toggle**, not a hold: press once to engage (flashes the track/scene function-button LEDs), press again to release. The physical release (note-off) is ignored by design — this matches the original behavior and was an intentional decision, not a bug. Shift state is tracked in `ControlStateStore` via `DeviceHandler._shift_active()`.
 - **PLAY** (`0x5B`) and **REC** (`0x5D`) call into `TransportHandler.togglePlay()` / `toggleRecord()` on every full press (velocity 127), which call FL's `transport.start/stop/record()` and resync `SessionState` from FL's actual transport state afterward.
 - **Track buttons** (`0x40`–`0x47`, below the pad grid) and **scene buttons** (`0x52`–`0x56`) are recognized but **stubbed** — pressing one logs `[stub] track button 'X' not implemented` and marks the event handled, but no action fires. Their SHIFT-held names (`up`/`down`/`left`/`right`/`knob_vol`/`knob_pan`/`knob_send`/`knob_device` for track buttons; `clip_stop`/`solo`/`mute`/`rec_arm`/`select` for scene buttons) are already mapped in `mapping.py` for whenever this gets implemented — **except** SHIFT+up/down, which is implemented but only takes effect in performance mode (see below); pressed outside performance mode, up/down still fall through to the stub.
 - **STOP** (`0x51`) is defined in `mapping.py` but has no handler wired up at all — currently a no-op pass-through.
@@ -85,11 +91,11 @@ SHIFT/PLAY/REC and the knobs behave identically in both modes — only pad note 
 
 ## LED color model
 
-Pad and function-button LEDs are driven entirely through the **built-in Note On velocity palette** (`9X PP VV` — channel `X` selects brightness/pulse/blink behavior, velocity `VV` indexes a fixed 128-entry firmware color table). See `dev/docs/LED_COLOR_SCHEME.md` for the full palette breakdown. This script does **not** use the SysEx RGB Color Lighting message — that was evaluated during the refactor and deliberately left out of scope; `dev/standalone_apckey25.py` has reference code for it if that's ever revisited.
+Pad and function-button LEDs are driven entirely through the **built-in Note On velocity palette** (`9X PP VV` — channel `X` selects brightness/pulse/blink behavior, velocity `VV` indexes a fixed 128-entry firmware color table). See `docs/LED_COLOR_SCHEME.md` for the full palette breakdown, cross-referenced against `akai_apc_key_25.yaml`. This script does **not** use the SysEx RGB Color Lighting message — that was evaluated during development and deliberately left out of scope.
 
 ## Debug logging
 
-`DEBUG_LEVEL` (top of `device_APCKey25mk2V3.py`) controls output verbosity:
+`DEBUG_LEVEL` (top of `device_APCKey25mk2.py`) controls output verbosity:
 
 | Level | Shows |
 |---|---|
@@ -107,6 +113,4 @@ These are called out in code comments where relevant; collected here for visibil
 - **`event.handled = True`** is set for every event the script fully handles (shift, play, record, track/scene stubs, knobs). This is provisional — it stops FL from also treating those as passthrough MIDI, but hasn't been validated on hardware that this is the desired behavior for every one of those event types.
 - **Track/scene buttons and STOP** are unimplemented (see Standard mode above), except SHIFT+up/down in performance mode (track scroll — see above).
 - **Performance-mode pad stop** (`_handle_pad_performance_trigger`, `playlist.triggerLiveClip(row, -1, midi.TLC_Fill)`) is confirmed working on real hardware. Row 5 (bottom row) not starting clips was root-caused to a dispatch-table collision (see Performance mode section above) and fixed — pending re-verification on real hardware that row 5 now starts correctly and that rows 1-4 are unaffected.
-- **Track scroll (SHIFT + up/down)** is new. An import-time crash (`RuntimeError: Operation unsafe at current time` from calling `playlist.selectTrack`/`deselectAll` in `PerformanceMode.__init__`) was caught and fixed by deferring the initial selection to `OnInit()`. Confirmed on real hardware: pad LEDs scroll correctly, and stopping a clip on a scrolled row targets the right track. **Not yet confirmed on real hardware:** starting a clip on a scrolled row via the new `mapping.performance_note_for(track, col)` formula — this replaced the old fixed `PERFORMANCE_INPUT_REMAP` table and is what makes starting scroll-aware, but its validity for tracks beyond 5 (i.e. after actually scrolling) is inferred from the pattern in tracks 1-5, not independently verified.
-
-See `v3_REFACTOR_PLAN.md` for the full history of what changed during the V2 → V3 refactor and why.
+- **Track scroll (SHIFT + up/down)** is new. An import-time crash (`RuntimeError: Operation unsafe at current time` from calling `playlist.selectTrack`/`deselectAll` in `PerformanceMode.__init__`) was caught and fixed by deferring the initial selection to `OnInit()`. Confirmed on real hardware: pad LEDs scroll correctly, and stopping a clip on a scrolled row targets the right track. **Not yet confirmed on real hardware:** starting a clip on a scrolled row via the new `mapping.performance_note_for(track, col)` formula — this replaced the old fixed remap table and is what makes starting scroll-aware, but its validity for tracks beyond 5 (i.e. after actually scrolling) is inferred from the pattern in tracks 1-5, not independently verified.

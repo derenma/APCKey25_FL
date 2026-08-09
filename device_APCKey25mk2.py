@@ -2,7 +2,32 @@
 # url=https://forum.image-line.com/viewtopic.php?t=323673
 # Author: Matt Deren
 # Inspired by original script by Martijn Tromp: https://forum.image-line.com/viewtopic.php?f=1994&t=225886
-# Note: This script as very little in common with the original and has morphed into its own beast.
+# Notes:
+# - This script as very little in common with the original and has morphed into its own beast.
+# - Tested with FL Studio 2026 v26.1.3 [build 5570]
+# - Built in VS Code. Hence, there are playright ignore messages to clean up linting warnings
+# - sysex for creating custom RGB pad colors simply doesn't work and my particular device does not respond to
+# 	the the required "Introduction Message". I suspect there is a specific version number that needs to be sent
+#	that is currently not documented. (Bruteforcing this may work, but also could be a massive waste of time)
+#	Snippets of my debug code, if anyone wants to give this a go:
+#	# Sysex Debug Bullshit ##############################################
+#	# TEST: RGB Color Lighting SysEx (pads 0x00-0x27, R=255 G=255 B=0)
+#	#self.buttons.all_pads_off(speed=0.00)
+#	#time.sleep(1)
+#	#self.buttons.all_pads_on(speed=0.00)
+#	#time.sleep(1)
+#	# TEST: MMC Device Enquiry (F0 7E 00 06 01 F7)
+#	#device.midiOutSysex(bytes([0xF0, 0x7E, 0x00, 0x06, 0x01, 0xF7]))
+#	#time.sleep(1)
+#	#device.midiOutSysex(bytes([0xF0, 0x47, 0x7F, 0x4E, 0x60, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00, 0xF7])) # Introduction Message
+#	#time.sleep(1)
+#	#print('sending color change')
+#	#device.midiOutSysex(bytes([0xF0, 0x47, 0x7F, 0x4E, 0x24, 0x00, 0x08, 0x00, 0x00, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0xF7]))
+#	#device.midiOutSysex(bytes([0xF0, 0x47, 0x7F, 0x4E, 0x24, 0x00, 0x08, 0x00, 0x00, 0x01, 0x7F, 0x00, 0x00, 0x01, 0x7F, 0xF7]))
+#	#####################################################################
+# Quick Start:
+#	...
+#########################################################################
 import sys
 import time
 import transport  # pyright: ignore[reportMissingImports]
@@ -29,7 +54,7 @@ class DebugLevel(Enum):
 	STATUS = 1
 	VERBOSE = 2
 
-DEBUG_LEVEL = DebugLevel.VERBOSE
+DEBUG_LEVEL = DebugLevel.STATUS
 
 def log_status(msg):
 	if DEBUG_LEVEL.value >= DebugLevel.STATUS.value:
@@ -273,6 +298,7 @@ class DeviceHandler():
 			log_status(f"Stopped live clip: row={row} track={track} col={col} pad={event.data1}")
 			event.handled = True
 
+	# knobAdjust normalizes velocity data that is "built-in" to knob turns.
 	def knobAdjust(self, event):
 		knob = event.data1 - 48
 		value = event.data2
@@ -362,23 +388,6 @@ class DeviceHandler():
 			if self.state.isPlaying() == 1:
 				self.controls.togglePlay()
 				self.state.isPlaying(set=0)
-				# Sysex Debug Bullshit ##############################################
-				# TEST: RGB Color Lighting SysEx (pads 0x00-0x27, R=255 G=255 B=0)
-				#print("is playing")
-				#print(f"bound port: {device.getPortNumber()}")
-				#self.buttons.all_pads_off(speed=0.00)
-				#time.sleep(1)
-				#self.buttons.all_pads_on(speed=0.00)
-				#time.sleep(1)
-				# TEST: MMC Device Enquiry (F0 7E 00 06 01 F7)
-				#device.midiOutSysex(bytes([0xF0, 0x7E, 0x00, 0x06, 0x01, 0xF7]))
-				#time.sleep(1)
-				#device.midiOutSysex(bytes([0xF0, 0x47, 0x7F, 0x4E, 0x60, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0xF7]))
-				#time.sleep(1)
-				#print('sending color change')
-				#device.midiOutSysex(bytes([0xF0, 0x47, 0x7F, 0x4E, 0x24, 0x00, 0x08, 0x00, 0x00, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0xF7]))
-				#device.midiOutSysex(bytes([0xF0, 0x47, 0x7F, 0x4E, 0x24, 0x00, 0x08, 0x00, 0x00, 0x01, 0x7F, 0x00, 0x00, 0x01, 0x7F, 0xF7]))
-				#####################################################################
 			else:
 				self.state.isPlaying(set=1)
 				self.controls.togglePlay()
