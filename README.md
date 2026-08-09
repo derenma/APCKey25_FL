@@ -4,6 +4,8 @@ FL Studio MIDI scripting reference: https://www.image-line.com/fl-studio-learnin
 
 This is an FL Studio hardware device script for the Akai APC Key 25 mk2. It lives in FL Studio's `Settings/Hardware/APCKey25mk2` folder and is loaded automatically by FL Studio when the device is assigned as a MIDI controller.
 
+Github: https://github.com/derenma/APCKey25_FL
+
 ## Files
 
 - **`device_APCKey25mk2V3.py`** — the active script. This is what FL Studio loads.

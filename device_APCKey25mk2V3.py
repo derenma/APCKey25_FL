@@ -1,18 +1,15 @@
 # name=APCKey25mk2V3
-# url=https://forum.image-line.com/viewtopic.php?f=1994&t=225886
-# This import section is loading the back-end code required to execute the script. You may not need all modules that are available for all scripts.
-import transport
-import mixer
-import ui
+# url=https://forum.image-line.com/viewtopic.php?t=323673
+# Author: Matt Deren
+# Inspired by original script by Martijn Tromp: https://forum.image-line.com/viewtopic.php?f=1994&t=225886
+# Note: This script as very little in common with the original and has morphed into its own beast.
 import sys
-import device
-import channels
-import playlist
-import patterns
-import plugins
-import screen
-import midi
 import time
+import transport  # pyright: ignore[reportMissingImports]
+import device  # pyright: ignore[reportMissingImports]
+import playlist  # pyright: ignore[reportMissingImports]
+import patterns  # pyright: ignore[reportMissingImports]
+import midi  # pyright: ignore[reportMissingImports]
 
 from dataclasses import dataclass
 from enum import Enum

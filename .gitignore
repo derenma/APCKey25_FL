@@ -1,3 +1,6 @@
 .venv/*
 __pycache__/*
 dev/*
+v3_REFACTOR_PLAN.md
+AGENTS.md
+FORUM_POST.md
