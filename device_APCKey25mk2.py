@@ -1,8 +1,31 @@
 # name=APCKey25mk2V3
 # url=https://forum.image-line.com/viewtopic.php?t=323673
+# supportedDevices=MIDIIN2 (APC Key 25 mk2)
+# supportedHardwareIds=47 4E 00 19 05 22 00 00 7F 00 00 00 00 0A 04 32 33 30 38 32 35 35 39 31 35 37 36 33 30
+# To enable auto-linking without manually assigning this script in MIDI
+# Settings, uncomment and fill these in with real values captured from this
+# script's own deviceInfo() (device.getName()) and parseDevID() VERBOSE log
+# output on actual hardware — not yet confirmed, so left inactive:
+# ## supportedDevices=<exact device.getName() string from the VERBOSE log>
+# ## supportedHardwareIds=<space-separated hex bytes from parseDevID()'s VERBOSE log>
+# ## receiveFrom= is not used: this device's two physical MIDI ports are both
+# handled by this single script instance via the OnMidiMsg/OnMidiIn
+# performance-mode split (see DEV_NOTES.md: OnMidiMsg / OnMidiIn), not via
+# device.dispatch() from a second, paired device script.
+# #######################################################################
 # Author: Matt Deren
 # Inspired by original script by Martijn Tromp: https://forum.image-line.com/viewtopic.php?f=1994&t=225886
-# This script has very little in common with the original and has morphed into its own beast.
+# This script has very little in common with the original and has morphed into its own beast. Credit MUST be given
+# where credit is due! With the original script for this device, I was able to spring-board at light speed
+# into the world of programmatic MIDI control and device reverse engineering. Cheers!
+# #######################################################################
+# LLM Disclosure
+# 	LLMs were used in this script to perform complex bug mitigation, reverse engineering, refactoring and documentation.
+#   However:
+# 	There isn't a single line of this code that isn't human reviewed and understandable.
+#   Much of this script still is originally hand coded and unchanged. Use LLMs to make you smarter, not as a 
+#   method to transform actual intellegence and creativity into a billable commodity.
+# #######################################################################
 # See DEV_NOTES.md for compatibility notes, the SysEx RGB debug snippets, and other design-decision history.
 #########################################################################
 import sys
@@ -36,7 +59,7 @@ class DebugLevel(Enum):
 	STATUS = 1
 	VERBOSE = 2
 
-DEBUG_LEVEL = DebugLevel.STATUS
+DEBUG_LEVEL = DebugLevel.VERBOSE
 
 def log_status(msg):
 	"""Print `msg` if `DEBUG_LEVEL` is at least `DebugLevel.STATUS`.
@@ -616,6 +639,12 @@ class DeviceHandler():
 			#skip all the boring debug data
 			return()
 
+		# Ready-to-paste header metadata line — device.getName() is safe to
+		# read as soon as the device is assigned, which it already is by the
+		# time this method runs. See device_APCKey25mk2.py's header comment
+		# for where this value belongs.
+		log_verbose(f"header metadata: supportedDevices={device.getName()}")
+
 		# deviceID Data Map
 		self.dIdMap: list[Optional[str]] = [None] * 29
 		self.dIdMap[0] = "Manu. ID" # 0x47
@@ -634,10 +663,23 @@ class DeviceHandler():
 
 	def parseDevID(self):
 		"""Log each byte of `device.getDeviceID()` alongside its label from
-		`self.dIdMap`, at `VERBOSE` debug level."""
+		`self.dIdMap`, at `VERBOSE` debug level. Also logs a ready-to-paste
+		`supportedHardwareIds=` header metadata line, once the full raw ID
+		has actually been read out byte-by-byte above — the safest point to
+		build it, since it can't be assembled before every byte has been
+		confirmed present."""
 		mmcOffset = 5
-		for idx,c in enumerate(device.getDeviceID()):
-			log_verbose(f"raw device ID byte {idx:02d}/{idx+1+mmcOffset:02d} ({self.dIdMap[idx]}): 0x{c:02X}")
+		raw_id = device.getDeviceID()
+		# Pad the label field to the widest label so every line's trailing
+		# ": 0xNN" lines up in the console, regardless of label length.
+		label_width = max((len(str(label)) for label in self.dIdMap), default=0)
+		for idx,c in enumerate(raw_id):
+			label = f"{str(self.dIdMap[idx]):<{label_width}}"
+			log_verbose(f"raw device ID byte {idx:02d}/{idx+1+mmcOffset:02d} ({label}): 0x{c:02X}")
+
+		if raw_id:
+			hex_bytes = " ".join(f"{c:02X}" for c in raw_id)
+			log_verbose(f"header metadata: supportedHardwareIds={hex_bytes}")
 
 class TransportHandler():
 	"""Play/record/loop/fast-forward/rewind wrappers around FL's `transport`
