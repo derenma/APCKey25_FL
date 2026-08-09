@@ -42,6 +42,8 @@ from typing import Optional
 
 import mapping
 
+__version__ = "2.0.0"
+
 # --- Debug logging -----------------------------------------------------------
 class DebugLevel(Enum):
 	"""Verbosity levels for `log_status`/`log_verbose`, checked cheaply so
@@ -1167,7 +1169,7 @@ def OnInit():
 	are unsafe to call during module-level construction (script import
 	time), but are fine here.
 	"""
-	log_status("onInit")
+	log_status(f"onInit (v{__version__})")
 	live.select_tracks()
 
 def OnDeInit():
