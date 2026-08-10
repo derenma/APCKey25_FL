@@ -95,6 +95,15 @@ KNOB_CTRL = BiMap({
 	0x47: "knob_device",
 })
 
+# The other 4 of the 8 track buttons — their SHIFT-held (arrow) meaning.
+# Lit while Performance Mode is active; see PadLighting.set_arrow_buttons.
+ARROW_BUTTONS = BiMap({
+	0x40: "up",
+	0x41: "down",
+	0x42: "left",
+	0x43: "right",
+})
+
 # Scene-launch buttons, default meaning.
 SCENE_BUTTONS = BiMap({
 	0x52: "scene_1",
