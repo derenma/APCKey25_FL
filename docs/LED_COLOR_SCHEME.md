@@ -17,6 +17,15 @@ structured. Source: `docs/APC Key 25 mk2 - Communication Protocol - v1.1.pdf`.
   (`rgb_palette.velocity_to_hex_rgb` in the yaml). This palette cannot be changed — it's ROM,
   not RGB math. Velocity is a lookup index, not a color component.
 
+> **Hardware quirk, confirmed, undocumented in the protocol PDF:** palette indices `1`
+> (`#1E1E1E`) and `2` (`#7F7F7F`) cause the pad to flicker/flash periodically (roughly every
+> 5-6 seconds) on real hardware, regardless of which brightness/pulse channel (`9X`) they're
+> sent with — this is a static, one-time Note On with no polling or resend involved, so it's the
+> device itself animating those specific indices, not a script bug. Index `3` (`#FFFFFF`) is
+> confirmed safe. Other indices haven't been systematically tested — avoid `1`/`2` for any pad
+> color choice until more of the palette is verified. See DEV_NOTES.md "ROOT CAUSE CONFIRMED:
+> low RGB-palette color indices" for the investigation.
+
 MIDI channel (the `X` in `9X`) doubles as the **behavior** selector for RGB pads:
 
 | Channel | Status byte | Behavior |

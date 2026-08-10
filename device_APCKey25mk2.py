@@ -63,6 +63,14 @@ class DebugLevel(Enum):
 
 DEBUG_LEVEL = DebugLevel.VERBOSE
 
+# If True, PerformanceMode.OnUpdateLiveMode colors each row with the closest
+# palette match to that row's FL Studio track color (mapping.COLOR_MAP /
+# closest_color_index_for_fl_color — see DEV_NOTES.md: OnUpdateLiveMode
+# track-color rows). If False, falls back to the legacy fixed scheme from
+# before that feature: white (COLOR_MAP index 3) for idle/scheduled pads,
+# dark red (index 6) for playing pads — no per-track color lookup at all.
+ATTEMPT_COLOR_GUESS = False
+
 def log_status(msg):
 	"""Print `msg` if `DEBUG_LEVEL` is at least `DebugLevel.STATUS`.
 
@@ -411,28 +419,28 @@ class DeviceHandler():
 		return control.active if control is not None else False
 
 	def _handle_pad_performance_trigger(self, event):
-		"""If this pad's live-clip block is already playing, stop it via
-		FL's playlist.triggerLiveClip API instead of leaving it to FL's own
-		note-triggered retrigger (which just restarts the same clip on a
-		second press). Must run on the pre-remap physical pad ID —
+		"""Handle a performance-mode pad press before the note-remap below:
+		while the song is playing, stop an already-playing block; while
+		stopped, stage (queue) a filled block instead of letting it sound
+		as a raw note. Must run on the pre-remap physical pad ID —
 		event.data1 at this point, before eventHandler substitutes the
 		computed performance note below — since mapping.PAD_TO_GRID_POSITION
 		is keyed by physical pad IDs.
 
-		Starting a clip is intentionally NOT done here — see DEV_NOTES.md:
-		_handle_pad_performance_trigger for why.
+		Starting a clip **while playing** is intentionally NOT done here —
+		see DEV_NOTES.md: _handle_pad_performance_trigger for why (relies on
+		raw-note passthrough instead). Staging **while stopped** is handled
+		here directly — see DEV_NOTES.md: _handle_pad_performance_trigger
+		clip staging while stopped for the design and what's unverified.
 
 		Args:
 			event: Incoming FL MIDI event. Mutated in place (`event.handled`
-				is set) if this press stops a playing clip; otherwise left
-				untouched.
+				is set) if this press stops a playing clip or stages a
+				filled-but-stopped one; otherwise left untouched.
 
 		Note:
 			`getLiveBlockStatus(row, col, 0)` returns a bitmask: filled=1,
-			scheduled=2, playing=4 (FL Studio MIDI scripting docs). Only the
-			playing bit matters here — a filled-but-not-yet-playing
-			(scheduled) block shouldn't be stopped by a press, it should
-			start.
+			scheduled=2, playing=4 (FL Studio MIDI scripting docs).
 		"""
 		if event.data2 == 0:
 			return  # only act on press, not release
@@ -443,6 +451,22 @@ class DeviceHandler():
 
 		row, col = grid_pos
 		track = row + self.live.track_offset  # physical row -> currently-scrolled-to playlist track
+
+		if not self.state.isPlaying():
+			# Stopped: stage (queue) this clip instead of letting the raw
+			# note below sound it directly like a keybed key. Only for a
+			# filled block — an empty pad press falls through unhandled,
+			# same as before. TLC_Queue is believed to select/arm the block
+			# without starting it (shows as the existing "scheduled" flash
+			# in OnUpdateLiveMode) — unverified on real hardware, see
+			# DEV_NOTES.md.
+			status = playlist.getLiveBlockStatus(track, col, 0)
+			if status & 1:
+				playlist.triggerLiveClip(track, col, midi.TLC_Queue)
+				log_status(f"Staged live clip: row={row} track={track} col={col} pad={event.data1}")
+				event.handled = True
+			return
+
 		status = playlist.getLiveBlockStatus(track, col, 0)
 		if status & 4:
 			# blockNum=-1 — see DEV_NOTES.md: _handle_pad_performance_trigger.
@@ -480,7 +504,13 @@ class DeviceHandler():
 			log_verbose(f"knob={knob} dir=down delta=-{vel+1} value={self.knobs[knob]}")
 
 		if value > 0 and value < 28:
-			vel = value
+			# vel = value - 1, not value: the down branch's vel = 127 - value
+			# reaches 0 at its slowest turn (value=127), giving delta=vel+1=1.
+			# Using vel = value directly here would start at vel=1 for the
+			# slowest up turn (value=1), giving delta=2 and skipping delta=1
+			# entirely — confirmed on real hardware. The -1 makes both
+			# directions symmetric: delta range is 1-27 either way.
+			vel = value - 1
 			if self.knobs[knob] < 127:
 				self.knobs[knob] = self.knobs[knob] + (vel+1)
 				if self.knobs[knob] > 127:
@@ -561,14 +591,16 @@ class DeviceHandler():
 		"""
 		if event.data2 == 127:
 			if self._shift_active():
+				# Currently engaged -> this press releases it.
 				self.controlStates.set_active(ControlKind.FUNCTION_BUTTON, event.data1, False)
-				print("shift active")
-				self.buttons.set_knob_ctrl_dim(True)
+				print("shift released")
+				self.buttons.set_knob_ctrl_dim(False)
 				#self.buttons.set_func_buttons(True)
 			else:
+				# Currently released -> this press engages it.
 				self.controlStates.set_active(ControlKind.FUNCTION_BUTTON, event.data1, True)
-				print("shift inactive")
-				self.buttons.set_knob_ctrl_dim(False)
+				print("shift engaged")
+				self.buttons.set_knob_ctrl_dim(True)
 				#self.buttons.set_func_buttons(True, flash=True)
 
 		# event.handled=True is provisional — see DEV_NOTES.md: _handle_shift.
@@ -627,39 +659,47 @@ class DeviceHandler():
 	def _handle_track_button(self, event):
 		"""Handle one of the 8 track-select buttons.
 
-		In performance mode, SHIFT + up/down scrolls the visible 5-row pad
-		window up/down the playlist track list. Everything else about the
-		track buttons is still a stub — shift-mode names are already mapped
-		in `mapping.py` (`TRACK_BUTTONS_SHIFT`) for whenever this gets
-		implemented.
+		Performance Mode and Normal Mode are two distinct states for these
+		buttons — Performance Mode always uses the `TRACK_BUTTONS_SHIFT`
+		names (up/down scroll the visible 5-row pad window; the rest are
+		still stubs), Normal Mode always uses the default `TRACK_BUTTONS`
+		names (also stubs) unless SHIFT is held, in which case it borrows
+		the same shift-name set. SHIFT is no longer involved in Performance
+		Mode at all — see DEV_NOTES.md: `_handle_track_button` /
+		`_handle_scene_button` mode-based naming.
 
 		Args:
 			event: Incoming FL MIDI event. Always marked handled.
 		"""
-		if self.state.isPerformance() and self._shift_active():
+		if self.state.isPerformance():
 			name = mapping.TRACK_BUTTONS_SHIFT[event.data1]
 			if name in ("up", "down"):
 				if event.data2 != 0:  # only scroll on press, not release
 					self.live.scroll(-1 if name == "up" else 1)
 				event.handled = True
 				return
+			# Stubbed for now — not wired to any action yet.
+			log_status(f"[stub] track button '{name}' ({hex(event.data1)}) not implemented")
+			event.handled = True
+			return
 
-		# Stubbed for now. Not wired to any action yet (undecided what
-		# these should do); shift-mode names are already mapped in
-		# mapping.py (TRACK_BUTTONS_SHIFT) for whenever this gets
-		# implemented.
+		# Normal Mode: SHIFT still toggles between the default and
+		# shift-name sets for whenever these get implemented.
 		name = mapping.TRACK_BUTTONS_SHIFT[event.data1] if self._shift_active() else mapping.TRACK_BUTTONS[event.data1]
 		log_status(f"[stub] track button '{name}' ({hex(event.data1)}) not implemented")
 		event.handled = True
 
 	def _handle_scene_button(self, event):
 		"""Handle one of the 5 scene-launch buttons. Stubbed — see
-		`_handle_track_button`.
+		`_handle_track_button` for the Performance-vs-Normal-Mode naming
+		split (Performance Mode always uses `SCENE_BUTTONS_SHIFT`, no SHIFT
+		needed; Normal Mode uses `SCENE_BUTTONS` unless SHIFT is held).
 
 		Args:
 			event: Incoming FL MIDI event. Always marked handled.
 		"""
-		name = mapping.SCENE_BUTTONS_SHIFT[event.data1] if self._shift_active() else mapping.SCENE_BUTTONS[event.data1]
+		use_shift_names = self.state.isPerformance() or self._shift_active()
+		name = mapping.SCENE_BUTTONS_SHIFT[event.data1] if use_shift_names else mapping.SCENE_BUTTONS[event.data1]
 		log_status(f"[stub] scene button '{name}' ({hex(event.data1)}) not implemented")
 		event.handled = True
 
@@ -791,17 +831,20 @@ class PadLighting():
 		self.state = state
 		self.controlStates = controlStates
 
-		self.initialDim = mapping.PAD_LED_FUNCTION.id_for("bright_2")
-		self.initialColor = 0x02 # a bright white/grey or something
-		time.sleep(1)
+		self.initialDim = mapping.PAD_LED_FUNCTION.id_for("bright_5")
+		# color=3 (white), not 1 or 2 — confirmed on real hardware that low
+		# palette indices 1/2 cause periodic flicker, independent of LED
+		# mode/channel. See DEV_NOTES.md: periodic LED flash investigation.
+		self.initialColor = 0x03
+		self.startup_speed = 0.01
 
 		log_status("Turning pads on...")
-		time.sleep(3)
-		log_verbose("speed=0.01")
-		self.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x00, speed=0.01)
+		time.sleep(1)
+		log_verbose(f"speed={self.startup_speed}")
+		self.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x00, speed=self.startup_speed)
 		#self.animate_pads_on(speed=0.05)
-		log_verbose(f"color={self.initialColor} speed=0.05")
-		self.cycle_pads(self.initialDim, self.initialColor, speed=0.05)
+		log_verbose(f"color={self.initialColor} speed={self.startup_speed}")
+		self.cycle_pads(self.initialDim, self.initialColor, speed=self.startup_speed)
 
 		log_status("Turning on function buttons...")
 		self.set_func_buttons(True)
@@ -869,7 +912,7 @@ class PadLighting():
 				`animate_pads_off`; the per-pad delay is currently
 				hardcoded below.
 		"""
-		mode = mapping.PAD_LED_FUNCTION.id_for("bright_5")
+		mode = mapping.PAD_LED_FUNCTION.id_for("bright_4")
 		for row in mapping.START_PATTERN:
 			for key in row:
 				self.midiHandler.sendMessage(mode, key, 0x05)
@@ -883,7 +926,7 @@ class PadLighting():
 		Args:
 			speed: Unused — see `animate_pads_on`.
 		"""
-		mode = mapping.PAD_LED_FUNCTION.id_for("bright_5")
+		mode = mapping.PAD_LED_FUNCTION.id_for("bright_4")
 		for row in mapping.START_PATTERN:
 			for key in row:
 				self.midiHandler.sendMessage(mode, key, 0x22)
@@ -940,11 +983,37 @@ class PerformanceMode:
 		# cleared. See DEV_NOTES.md: OnUpdateLiveMode one-shot auto-clear.
 		self._was_playing = {}
 
+		# Guards the auto-select-on-performance-mode-entry check in
+		# OnUpdateLiveMode below. False until on_script_ready() runs (from
+		# module-level OnInit()) — mutating playlist calls (selectTrack/
+		# deselectAll, inside select_tracks()) are unsafe during this
+		# constructor's own OnUpdateLiveMode(0) call below. See
+		# DEV_NOTES.md: PerformanceMode.__init__ / on_script_ready.
+		self._can_select_tracks = False
+		self._performance_was_active = False
+
 		# select_tracks() is NOT called here — see DEV_NOTES.md:
 		# PerformanceMode.__init__ for why. See module-level OnInit().
 
 		# If script restart, this should update the LEDs
 		self.OnUpdateLiveMode(0)
+
+	def on_script_ready(self):
+		"""Arm performance-mode-entry tracking. Called once from
+		module-level `OnInit()`, after mutating playlist calls
+		(`selectTrack`/`deselectAll`) become safe to make.
+
+		If FL is already in performance mode at this point (e.g. a project
+		saved while already in performance mode), selects its tracks
+		immediately — mirroring the old unconditional startup behavior, but
+		only for the case where it's actually correct. Either way, this
+		also seeds `_performance_was_active` so `OnUpdateLiveMode` doesn't
+		immediately re-select on its next call.
+		"""
+		self._can_select_tracks = True
+		self._performance_was_active = playlist.getPerformanceModeState()
+		if self._performance_was_active:
+			self.select_tracks()
 
 	def select_tracks(self):
 		"""Select the 5 playlist tracks currently visible in the pad grid,
@@ -1026,13 +1095,51 @@ class PerformanceMode:
 			right.
 
 			`getLiveBlockStatus(row, col, 0)` returns a bitmask: filled=1,
-			scheduled=2, playing=4. A block that's actually playing is
-			solid; a block that's filled+scheduled but not yet playing
-			(queued to launch next in this row) flashes instead of using a
-			separate color, so the pending clip-transition is visible at a
-			glance — see DEV_NOTES.md: `OnUpdateLiveMode` clip-transition
-			LED behavior.
+			scheduled=2, playing=4. If `ATTEMPT_COLOR_GUESS` is `True`
+			(module-level, near `DEBUG_LEVEL`), each row's pad color is the
+			closest `mapping.COLOR_MAP` match to that row's FL Studio track
+			color (`mapping.closest_color_index_for_fl_color`), recomputed
+			every redraw so it follows scrolling, and the currently
+			*playing* block always shows a fixed bright-green indicator
+			(`mapping.PLAYING_INDICATOR_COLOR`) instead of the track color
+			so it's unambiguous regardless of hue. If `ATTEMPT_COLOR_GUESS`
+			is `False`, both fall back to the legacy fixed scheme instead —
+			white (index 3) for idle/scheduled, dark red (index 6) for
+			playing — with no per-track color lookup at all. Either way,
+			remaining state is conveyed via brightness/pulse channel:
+			filled-but-idle is solid but dim (`bright_2`), and
+			scheduled-but-not-yet-playing (queued to launch next in this
+			row) flashes (`pulse_1_4`) so the pending clip-transition is
+			visible at a glance — see DEV_NOTES.md: `OnUpdateLiveMode`
+			track-color rows / clip-transition LED behavior.
+
+			The pad-LED redraw below only runs while FL is actually in
+			performance mode (checked fresh via
+			`playlist.getPerformanceModeState()`, not the cached
+			`state.isPerformance()`, since this callback can fire from a
+			live-block status change with no accompanying MIDI event to
+			refresh that cache). FL can fire this callback even outside
+			performance mode (live blocks track filled/scheduled/playing
+			state during ordinary linear playback too) — without this
+			gate, pad LEDs would get repainted with live-clip colors while
+			the user is in Normal Mode. See DEV_NOTES.md: `OnUpdateLiveMode`
+			performance-mode gate.
 		"""
+		# Auto-select the visible tracks exactly when FL actually enters
+		# performance mode, not unconditionally at script load — see
+		# DEV_NOTES.md: OnUpdateLiveMode performance-mode-entry auto-select.
+		now_active = playlist.getPerformanceModeState()
+		if self._can_select_tracks:
+			if now_active and not self._performance_was_active:
+				log_status("Performance mode entered — selecting visible tracks")
+				self.select_tracks()
+			self._performance_was_active = now_active
+
+		if not now_active:
+			# Not in performance mode — this callback isn't ours to act on
+			# right now. Leave pad LEDs exactly as they are.
+			return
+
 		if self._first_run:
 			self._first_run = False
 			log_status("Performance Mode Init!")
@@ -1042,6 +1149,20 @@ class PerformanceMode:
 		for idx in range(1, 6):
 			track = idx + self.track_offset
 			track_now_playing = False
+			# Row color = the closest palette match to this track's FL Studio
+			# color, recomputed every redraw so it always reflects whichever
+			# track is currently scrolled into this row. State (playing /
+			# scheduled / idle) is conveyed by brightness/pulse channel, not
+			# hue, since the color itself is now fixed per-track rather than
+			# per-state — see DEV_NOTES.md: OnUpdateLiveMode track-color rows.
+			# ATTEMPT_COLOR_GUESS=False skips all of that and falls back to
+			# the legacy fixed white/red scheme instead.
+			if ATTEMPT_COLOR_GUESS:
+				track_color = mapping.closest_color_index_for_fl_color(playlist.getTrackColor(track))
+				playing_color = mapping.PLAYING_INDICATOR_COLOR
+			else:
+				track_color = 3  # legacy: white
+				playing_color = 6  # legacy: dark red
 			for blockNum in range(0, 8):
 				active = playlist.getLiveBlockStatus(track,blockNum,0)
 				pad = self.pos[idx][blockNum]
@@ -1051,13 +1172,21 @@ class PerformanceMode:
 					is_scheduled = bool(active & 2)
 					track_now_playing = track_now_playing or is_playing
 					if is_playing:
-						self.lighting.set_pad(pad, True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_4"), color=6)
+						# Fixed bright-green indicator, not the row's track
+						# color — makes the active clip in a row unambiguous
+						# regardless of track hue. Reverts automatically:
+						# this whole loop redraws every pad from current
+						# status every call, so once a different block
+						# starts playing (or this one stops), this pad falls
+						# back to the scheduled/idle branch below on the very
+						# next redraw.
+						self.lighting.set_pad(pad, True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_6"), color=playing_color)
 					elif is_scheduled:
 						# Queued to start next in this row, not playing yet — flash.
-						self.lighting.set_pad(pad, True, mode=mapping.PAD_LED_FUNCTION.id_for("pulse_1_4"), color=1)
+						self.lighting.set_pad(pad, True, mode=mapping.PAD_LED_FUNCTION.id_for("pulse_1_4"), color=track_color)
 					else:
-						self.lighting.set_pad(pad, True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_4"), color=1)
-					log_verbose(f"row={idx} track={track} col={blockNum} pad={pad} active={active} playing={is_playing} scheduled={is_scheduled} color={color_hex}")
+						self.lighting.set_pad(pad, True, mode=mapping.PAD_LED_FUNCTION.id_for("bright_2"), color=track_color)
+					log_verbose(f"row={idx} track={track} col={blockNum} pad={pad} active={active} playing={is_playing} scheduled={is_scheduled} track_color={track_color} fl_color={color_hex}")
 				else:
 					self.lighting.set_pad(pad, False)
 
@@ -1128,7 +1257,7 @@ def OnMidiMsg(event):
 	state.refresh()
 	if state.isPerformance():
 		kbd.eventHandler(event)
-		log_verbose(f"data1={event.data1} data2={event.data2}")
+		#log_verbose(f"data1={event.data1} data2={event.data2}")
 
 def OnMidiIn(event):
 	"""FL callback for the device's other physical MIDI port.
@@ -1164,17 +1293,19 @@ def OnSysEx(event):
 def OnInit():
 	"""FL callback: called once the script has finished loading.
 
-	Performs the initial playlist track selection deferred from
+	Arms `PerformanceMode`'s performance-mode-entry tracking, deferred from
 	`PerformanceMode.__init__` — `playlist.selectTrack()`/`deselectAll()`
 	are unsafe to call during module-level construction (script import
-	time), but are fine here.
+	time), but are fine here. Track selection itself only happens when FL
+	is actually in (or enters) performance mode — see
+	`PerformanceMode.on_script_ready`.
 	"""
 	log_status(f"onInit (v{__version__})")
-	live.select_tracks()
+	live.on_script_ready()
 
 def OnDeInit():
 	"""FL callback: called when the script is being unloaded. Turns off the
 	function button LEDs."""
 	log_status("onDeInit")
 	lighting.set_func_buttons(False)
-	#lighting.animate_pads_off()
+	lighting.animate_pads_off()
