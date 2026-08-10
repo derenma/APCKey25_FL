@@ -2,16 +2,6 @@
 # url=https://forum.image-line.com/viewtopic.php?t=323673
 # supportedDevices=MIDIIN2 (APC Key 25 mk2)
 # supportedHardwareIds=47 4E 00 19 05 22 00 00 7F 00 00 00 00 0A 04 32 33 30 38 32 35 35 39 31 35 37 36 33 30
-# To enable auto-linking without manually assigning this script in MIDI
-# Settings, uncomment and fill these in with real values captured from this
-# script's own deviceInfo() (device.getName()) and parseDevID() VERBOSE log
-# output on actual hardware — not yet confirmed, so left inactive:
-# ## supportedDevices=<exact device.getName() string from the VERBOSE log>
-# ## supportedHardwareIds=<space-separated hex bytes from parseDevID()'s VERBOSE log>
-# ## receiveFrom= is not used: this device's two physical MIDI ports are both
-# handled by this single script instance via the OnMidiMsg/OnMidiIn
-# performance-mode split (see DEV_NOTES.md: OnMidiMsg / OnMidiIn), not via
-# device.dispatch() from a second, paired device script.
 # #######################################################################
 # Author: Matt Deren
 # Inspired by original script by Martijn Tromp: https://forum.image-line.com/viewtopic.php?f=1994&t=225886
@@ -27,6 +17,8 @@
 #   method to transform actual intellegence and creativity into a billable commodity.
 # #######################################################################
 # See DEV_NOTES.md for compatibility notes, the SysEx RGB debug snippets, and other design-decision history.
+# See FEATURES_AND_FIXES.md for a list of recent changes
+# See INSTRUCTIONS.md for what is an expected functionality list. (There isn't much the user needs to do)
 #########################################################################
 import sys
 import time
@@ -42,7 +34,7 @@ from typing import Optional
 
 import mapping
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 # --- Debug logging -----------------------------------------------------------
 class DebugLevel(Enum):
@@ -61,7 +53,7 @@ class DebugLevel(Enum):
 	STATUS = 1
 	VERBOSE = 2
 
-DEBUG_LEVEL = DebugLevel.VERBOSE
+DEBUG_LEVEL = DebugLevel.STATUS
 
 # If True, PerformanceMode.OnUpdateLiveMode colors each row with the closest
 # palette match to that row's FL Studio track color (mapping.COLOR_MAP /
