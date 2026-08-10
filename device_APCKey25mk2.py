@@ -1015,6 +1015,36 @@ class PerformanceMode:
 		if self._performance_was_active:
 			self.select_tracks()
 
+	def on_project_loaded(self):
+		"""Reset all tracked state and force a full pad reset. Called from
+		module-level `OnProjectLoad` when a new project finishes loading.
+
+		Without this, a project's live-clip grid state (e.g. a pad left
+		flashing "scheduled") persists indefinitely on the pads after
+		loading a *different* project — `OnUpdateLiveMode` only touches pad
+		LEDs while performance mode is active (see its performance-mode
+		gate), so if the newly-loaded project isn't in performance mode,
+		nothing would otherwise ever redraw those pads back to idle. See
+		DEV_NOTES.md: OnProjectLoad.
+		"""
+		self.track_offset = 0
+		self._was_playing = {}
+		self._performance_was_active = False
+
+		# Unconditional reset (bypasses the diff cache in ControlStateStore
+		# and doesn't depend on being in performance mode right now) — same
+		# off-then-dim sequence as the startup sweep in PadLighting.__init__,
+		# so stale LED state from the previous project is guaranteed to
+		# clear regardless of what it was.
+		self.lighting.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x00, speed=0.01)
+		self.lighting.cycle_pads(self.lighting.initialDim, self.lighting.initialColor, speed=0.01)
+
+		# If the new project happens to already be in performance mode,
+		# redraw its actual live-clip grid immediately instead of leaving
+		# the idle sweep above as the final state.
+		if playlist.getPerformanceModeState():
+			self.OnUpdateLiveMode(0)
+
 	def select_tracks(self):
 		"""Select the 5 playlist tracks currently visible in the pad grid,
 		matching the current scroll position. selectTrack() only toggles
@@ -1308,4 +1338,23 @@ def OnDeInit():
 	function button LEDs."""
 	log_status("onDeInit")
 	lighting.set_func_buttons(False)
-	lighting.animate_pads_off()
+
+def OnProjectLoad(status):
+	"""FL callback: fires as a project loads — once with
+	`midi.PL_Start` when loading begins, then once more with either
+	`midi.PL_LoadOk` or `midi.PL_LoadError` when it finishes.
+
+	On a successful load, resets `PerformanceMode`'s tracked state and
+	forces a full pad reset (see `PerformanceMode.on_project_loaded`) —
+	otherwise the previous project's live-clip grid state (e.g. a pad left
+	flashing "scheduled") would persist on the pads indefinitely if the
+	newly-loaded project isn't immediately in performance mode.
+
+	Args:
+		status: One of `midi.PL_Start` (0), `midi.PL_LoadOk` (100), or
+			`midi.PL_LoadError` (101).
+	"""
+	log_status(f"onProjectLoad status={status}")
+	if status == midi.PL_LoadOk:
+		live.on_project_loaded()
+	#lighting.animate_pads_off()
