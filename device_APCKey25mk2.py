@@ -1357,4 +1357,4 @@ def OnProjectLoad(status):
 	log_status(f"onProjectLoad status={status}")
 	if status == midi.PL_LoadOk:
 		live.on_project_loaded()
-	lighting.animate_pads_off()
+	#lighting.animate_pads_off()
