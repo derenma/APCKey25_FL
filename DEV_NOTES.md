@@ -26,6 +26,7 @@ name if a reference is stale.
 - [ROOT CAUSE CONFIRMED: low RGB-palette color indices (1, 2) flicker on real hardware](#root-cause-confirmed-low-rgb-palette-color-indices-1-2-flicker-on-real-hardware)
 - [`OnUpdateLiveMode` — track-color rows](#onupdatelivemode--track-color-rows)
 - [`knobAdjust` — two real bugs found on real hardware](#knobadjust--two-real-bugs-found-on-real-hardware)
+- [`OnProjectLoad` — stale pad state across project loads](#onprojectload--stale-pad-state-across-project-loads)
 
 ---
 
@@ -1077,3 +1078,55 @@ hardware** — confirm a slow upward turn now bottoms out at `+1`, and that
 nothing about the fast-turn/large-delta behavior changed (the fix only
 shifts `vel` by 1, it doesn't change the branch conditions or the `+27`
 maximum).
+
+---
+
+## `OnProjectLoad` — stale pad state across project loads
+
+**Location:** module-level `OnProjectLoad`, ~line 1310;
+`PerformanceMode.on_project_loaded`, ~line 1018.
+
+Reported: after loading a different project/template (one that doesn't
+have performance mode enabled by default), pads kept showing live-clip
+grid state from the *previous* project — including a pad still flashing
+"scheduled" — even though that state had nothing to do with the newly
+loaded project at all.
+
+Root cause: `OnUpdateLiveMode`'s performance-mode gate (see that section
+above) means pad LEDs are **only** ever touched while `state.isPerformance()`
+is true. If the new project isn't in performance mode, nothing calls
+`OnUpdateLiveMode` at all after load — so whatever the pads were last set
+to (from the old project) just sits there indefinitely. Loading a new
+project doesn't inherently touch pad LEDs; only entering/being in
+performance mode does.
+
+FL has a callback for exactly this: `callbacks.OnProjectLoad(status)`,
+firing with `midi.PL_Start` (0) as loading begins, then
+`midi.PL_LoadOk` (100) or `midi.PL_LoadError` (101) when it finishes
+(confirmed from FL's own API stub source, `callbacks/__init__.py`). On a
+successful load, `PerformanceMode.on_project_loaded()`:
+
+1. Resets tracked state that's meaningless for a different project:
+   `track_offset` back to `0`, `_was_playing` cleared (one-shot auto-clear
+   tracking), `_performance_was_active` reset to `False` (so if the new
+   project is already in performance mode, or enters it later, the
+   entry-detection logic in `OnUpdateLiveMode` doesn't think it's already
+   "active" and skip the track-selection step).
+2. Forces an **unconditional** pad reset — the same off-then-dim
+   `cycle_pads` sequence used at startup — regardless of the new project's
+   performance-mode state. This bypasses both the performance-mode gate
+   and `ControlStateStore`'s diff cache, so stale LED state is guaranteed
+   to clear rather than relying on a redraw that might not happen.
+3. If the new project happens to already be in performance mode, calls
+   `OnUpdateLiveMode(0)` immediately afterward so its actual live-clip grid
+   shows up right away instead of being left on the generic idle sweep.
+
+**Not yet verified on real hardware** — implemented from FL's documented
+callback behavior, not tested against an actual project-load sequence.
+Worth specifically checking: (1) pads actually clear on loading a new
+project, matching the reported bug, (2) loading a project that's already
+in performance mode shows its live-clip grid correctly rather than just
+the idle sweep, (3) this doesn't fire unexpectedly during normal script
+reload (only `OnInit`/`on_script_ready` should run then, not
+`OnProjectLoad`) — should be fine since project load and script load are
+different FL lifecycle events, but hasn't been observed directly.
