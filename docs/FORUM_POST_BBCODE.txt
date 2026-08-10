@@ -1,0 +1,71 @@
+[size=150][b]Features and Fixes[/b][/size]
+
+Condensed changelog vs. the original script. Full detail in [i]FEATURES_AND_FIXES.md[/i]/[i]DEV_NOTES.md[/i] in the repo if you want the "why."
+
+--------------------
+
+[size=120][b]New Features[/b][/size]
+
+[u][b]Performance Mode[/b][/u]
+
+[list]
+[*][b]Track scroll (up/down)[/b] — pad grid can now show any 5 tracks, not just 1-5.
+[*][b]Pad stop[/b] — pressing a playing clip's pad now stops it instead of restarting it.
+[*][b]Clip staging while stopped[/b] — press a pad while stopped to stage/queue a clip, ready for the next Play.
+[*][b]One-shot clip auto-clear[/b] — one-shot clips no longer replay unexpectedly on the next Play.
+[*][b]Track-color pad rows[/b] (optional, off by default) — rows can approximate their FL track color.
+[*][b]Dedicated "playing" indicator[/b] — the actively playing pad is always bright green, regardless of row color.
+[*][b]Arrow-button mode indicator[/b] — up/down/left/right light up in Performance Mode, off in Normal Mode.
+[*][b]Reactive track auto-selection[/b] — FL's track selection follows the visible pad rows automatically.
+[/list]
+
+[u][b]Script lifecycle[/b][/u]
+
+[list]
+[*][b]Project-load reset[/b] — loading a different project clears stale pad state from the previous one.
+[*][b]Cleaner unload state[/b] — pads show a visible "unloaded" indicator instead of whatever they last displayed.
+[/list]
+
+[u][b]Standard Mode / buttons[/b][/u]
+
+[list]
+[*][b]Stop/All Clips[/b] — now acknowledged (stub) instead of silently doing nothing.
+[*][b]SUSTAIN disambiguation[/b] — no longer numerically confusable with the track_1 button.
+[/list]
+
+[u][b]Developer experience[/b][/u]
+
+[list]
+[*]Leveled debug logging (off/status/verbose).
+[*]State-diffed LED writes — skips redundant MIDI when nothing changed.
+[*]All mappings moved into a standalone data module.
+[*]Header metadata for FL's auto-linking.
+[*]Version constant, logged on init.
+[*]Full docs set: design notes, bug history, hardware test tracking.
+[*]Pad/button LED code consolidated — far fewer, more general methods.
+[/list]
+
+--------------------
+
+[size=120][b]Bug Fixes[/b][/size]
+
+[u][b]Inherited from the original script, found and fixed now[/b][/u]
+
+[list]
+[*]Row 5 never started clips in Performance Mode.
+[*]Knob turns could send an invalid MIDI value.
+[*]Knob "turn up" had an inconsistent minimum step vs. "turn down."
+[*]Pad LEDs got repainted even while not in Performance Mode.
+[*]Periodic pad LED flicker — traced to two specific palette colors the device itself animates.
+[*]A device-ID debug helper silently corrupted its own lookup table.
+[/list]
+
+[u][b]Introduced during this rewrite, found and fixed since[/b][/u]
+
+[list]
+[*]SHIFT engage/release LEDs and log messages were swapped.
+[*]Script load could clobber your track selection outside Performance Mode.
+[*]Track-color matching had red and blue swapped.
+[*]A "smarter" color-matching formula was tried, made things worse, and got reverted.
+[*]Stop/All Clips and SUSTAIN were completely unhandled.
+[/list]
