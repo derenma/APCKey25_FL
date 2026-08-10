@@ -27,6 +27,7 @@ name if a reference is stale.
 - [`OnUpdateLiveMode` — track-color rows](#onupdatelivemode--track-color-rows)
 - [`knobAdjust` — two real bugs found on real hardware](#knobadjust--two-real-bugs-found-on-real-hardware)
 - [`OnProjectLoad` — stale pad state across project loads](#onprojectload--stale-pad-state-across-project-loads)
+- [`OnUpdateLiveMode` — arrow-button LEDs](#onupdatelivemode--arrow-button-leds)
 
 ---
 
@@ -1130,3 +1131,59 @@ the idle sweep, (3) this doesn't fire unexpectedly during normal script
 reload (only `OnInit`/`on_script_ready` should run then, not
 `OnProjectLoad`) — should be fine since project load and script load are
 different FL lifecycle events, but hasn't been observed directly.
+
+---
+
+## `OnUpdateLiveMode` — arrow-button LEDs
+
+**Location:** `PadLighting.set_arrow_buttons`, ~line 891 (right after
+`set_knob_ctrl_dim`); wired up in `PerformanceMode.on_script_ready`,
+`OnUpdateLiveMode`, and `on_project_loaded`. `mapping.ARROW_BUTTONS`
+defines the 4 button IDs (`0x40`-`0x43`).
+
+Requested: light the 4 arrow (up/down/left/right) track-button LEDs while
+Performance Mode is active, off in Normal Mode — a visual indicator of
+which mode the controller is in, for the two buttons that actually do
+something mode-dependent (track scroll — see `_handle_track_button`).
+This only became necessary because `PadLighting.__init__`'s startup
+sequence was changed elsewhere to call `set_func_buttons(False)` instead
+of `True` (all function buttons, including these 4, now start off by
+default) — previously they'd have been lit unconditionally at startup
+regardless of mode, which wasn't a deliberate "on in performance mode"
+signal, just a side effect of the old always-on startup state.
+
+`ARROW_BUTTONS` in `mapping.py` mirrors the existing `KNOB_CTRL` pattern —
+both are 4-button subsets of the same 8 `TRACK_BUTTONS_SHIFT` IDs, split
+out so each can be driven independently (`KNOB_CTRL` for SHIFT dim/bright,
+`ARROW_BUTTONS` for this). `PadLighting.set_arrow_buttons(on)` itself
+mirrors `_set_func_buttons`'s on/off convention (`bright_0` mode,
+value `0x01`/`0x00`).
+
+Wired at three points, matching every other place `_performance_was_active`
+is already tracked/reset:
+
+1. **`on_script_ready`** — sets the LEDs to match performance-mode state
+   at script load, same as the existing `select_tracks()` call for the
+   already-active case.
+2. **`OnUpdateLiveMode`'s transition check** — this is the one place that
+   changed shape, not just gained a call. It used to only fire on the
+   *entering* transition (`now_active and not self._performance_was_active`),
+   since that was the only direction `select_tracks()` cared about. Now it
+   checks `now_active != self._performance_was_active` (either direction)
+   so the LEDs turn off on exit too, and `select_tracks()` stays nested
+   inside as the entering-only action:
+   ```python
+   if now_active != self._performance_was_active:
+       self.lighting.set_arrow_buttons(now_active)
+       if now_active:
+           self.select_tracks()
+   ```
+3. **`on_project_loaded`** — explicitly turns the LEDs off as part of the
+   unconditional reset (same reasoning as the pad reset: a new project
+   might not be in performance mode, and nothing else would turn a
+   previous project's "on" state back off). If the new project *is*
+   already in performance mode, the subsequent `OnUpdateLiveMode(0)` call
+   turns them back on via point 2 above (since `_performance_was_active`
+   was just reset to `False`, that call sees a transition).
+
+**Unverified on real hardware.**

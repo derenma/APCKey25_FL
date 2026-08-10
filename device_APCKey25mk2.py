@@ -846,8 +846,8 @@ class PadLighting():
 		log_verbose(f"color={self.initialColor} speed={self.startup_speed}")
 		self.cycle_pads(self.initialDim, self.initialColor, speed=self.startup_speed)
 
-		log_status("Turning on function buttons...")
-		self.set_func_buttons(True)
+		log_status("Turning off function buttons...")
+		self.set_func_buttons(False)
 
 	def cycle_pads(self, command, value, speed=0.05):
 		"""Send the same LED status byte/velocity to every pad.
@@ -900,6 +900,22 @@ class PadLighting():
 		else:
 			mode, value = mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x01
 		for key in mapping.KNOB_CTRL.by_id:
+			self.midiHandler.sendMessage(mode, key, value)
+			self.controlStates.set_led(ControlKind.FUNCTION_BUTTON, key, mode, value)
+
+	def set_arrow_buttons(self, on: bool):
+		"""Turn the 4 arrow (up/down/left/right) track-button LEDs on or
+		off — used to indicate whether Performance Mode is active. The
+		other 4 track buttons (knob_vol/pan/send/device) are unaffected;
+		see `set_knob_ctrl_dim` for those.
+
+		Args:
+			on: `True` = on (Performance Mode active), `False` = off
+				(Normal Mode).
+		"""
+		mode = mapping.PAD_LED_FUNCTION.id_for("bright_0")
+		value = 0x01 if on else 0x00
+		for key in mapping.ARROW_BUTTONS.by_id:
 			self.midiHandler.sendMessage(mode, key, value)
 			self.controlStates.set_led(ControlKind.FUNCTION_BUTTON, key, mode, value)
 
@@ -1008,10 +1024,13 @@ class PerformanceMode:
 		immediately — mirroring the old unconditional startup behavior, but
 		only for the case where it's actually correct. Either way, this
 		also seeds `_performance_was_active` so `OnUpdateLiveMode` doesn't
-		immediately re-select on its next call.
+		immediately re-select on its next call. Also sets the arrow-button
+		LEDs to match, since they aren't lit by default anymore (see
+		`PadLighting.set_arrow_buttons`).
 		"""
 		self._can_select_tracks = True
 		self._performance_was_active = playlist.getPerformanceModeState()
+		self.lighting.set_arrow_buttons(self._performance_was_active)
 		if self._performance_was_active:
 			self.select_tracks()
 
@@ -1038,10 +1057,14 @@ class PerformanceMode:
 		# clear regardless of what it was.
 		self.lighting.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_0"), 0x00, speed=0.01)
 		self.lighting.cycle_pads(self.lighting.initialDim, self.lighting.initialColor, speed=0.01)
+		self.lighting.set_arrow_buttons(False)
 
 		# If the new project happens to already be in performance mode,
 		# redraw its actual live-clip grid immediately instead of leaving
-		# the idle sweep above as the final state.
+		# the idle sweep above as the final state — this also turns the
+		# arrow-button LEDs back on, via the transition check in
+		# OnUpdateLiveMode below (since _performance_was_active was just
+		# reset to False above).
 		if playlist.getPerformanceModeState():
 			self.OnUpdateLiveMode(0)
 
@@ -1158,11 +1181,16 @@ class PerformanceMode:
 		# Auto-select the visible tracks exactly when FL actually enters
 		# performance mode, not unconditionally at script load — see
 		# DEV_NOTES.md: OnUpdateLiveMode performance-mode-entry auto-select.
+		# The arrow-button LEDs (up/down/left/right) track the same
+		# transition, in both directions — see DEV_NOTES.md:
+		# OnUpdateLiveMode arrow-button LEDs.
 		now_active = playlist.getPerformanceModeState()
 		if self._can_select_tracks:
-			if now_active and not self._performance_was_active:
-				log_status("Performance mode entered — selecting visible tracks")
-				self.select_tracks()
+			if now_active != self._performance_was_active:
+				self.lighting.set_arrow_buttons(now_active)
+				if now_active:
+					log_status("Performance mode entered — selecting visible tracks")
+					self.select_tracks()
 			self._performance_was_active = now_active
 
 		if not now_active:
@@ -1335,9 +1363,11 @@ def OnInit():
 
 def OnDeInit():
 	"""FL callback: called when the script is being unloaded. Turns off the
-	function button LEDs."""
+	function button LEDs and sets every pad to `bright_1` (no color) as a
+	visible "script unloaded" indicator, distinct from the fully-off state."""
 	log_status("onDeInit")
 	lighting.set_func_buttons(False)
+	lighting.cycle_pads(mapping.PAD_LED_FUNCTION.id_for("bright_1"), 0x00, speed=lighting.startup_speed)
 
 def OnProjectLoad(status):
 	"""FL callback: fires as a project loads — once with
