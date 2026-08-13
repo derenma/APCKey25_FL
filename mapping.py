@@ -29,7 +29,7 @@ class BiMap:
 
 # --- SysEx / device identity constants -------------------------------------
 # Not currently used (no SysEx handshake is implemented), kept as protocol
-# reference. See dev/docs/APC Key 25 mk2 - Communication Protocol - v1.1.pdf.
+# reference. See docs/apc_key_protocol/APC Key 25 mk2 - Communication Protocol - v1.1.pdf.
 MANUFACTURER_ID = 0x47
 DEVICE_ID_BROADCAST = 0x7F
 PRODUCT_ID = 0x4E
@@ -124,7 +124,7 @@ SCENE_BUTTONS_SHIFT = BiMap({
 
 # --- Pad LED behavior (status byte -> behavior name) -------------------------
 # Channel nibble of the Note On status byte selects LED behavior; see
-# dev/docs/LED_COLOR_SCHEME.md for the full velocity-palette writeup.
+# docs/apc_key_protocol/LED_COLOR_SCHEME.md for the full velocity-palette writeup.
 PAD_LED_FUNCTION = BiMap({
 	0x90: "bright_0",
 	0x91: "bright_1",
@@ -203,13 +203,13 @@ PAD_TO_GRID_POSITION = {
 }
 
 # --- RGB velocity palette (Note On velocity -> pad color) --------------------
-# Source: akai_apc_key_25.yaml `rgb_palette.velocity_to_hex_rgb`. This is the
-# device's fixed, firmware-ROM 128-color palette (see docs/LED_COLOR_SCHEME.md)
+# Source: docs/apc_key_protocol/akai_apc_key_25.yaml `rgb_palette.velocity_to_hex_rgb`. This is the
+# device's fixed, firmware-ROM 128-color palette (see docs/apc_key_protocol/LED_COLOR_SCHEME.md)
 # — velocity is a lookup index into this table, not a color component. Used
 # to find the closest palette match for an arbitrary FL Studio color (e.g. a
 # track color) since the device can't render arbitrary RGB via this message
 # type (only via the SysEx RGB Color Lighting message, which doesn't work on
-# this hardware — see DEV_NOTES.md's script header entry).
+# this hardware — see docs/DEV_NOTES.md's script header entry).
 COLOR_MAP = {
 	0: (0x00, 0x00, 0x00), 1: (0x1E, 0x1E, 0x1E), 2: (0x7F, 0x7F, 0x7F), 3: (0xFF, 0xFF, 0xFF),
 	4: (0xFF, 0x4C, 0x4C), 5: (0xFF, 0x00, 0x00), 6: (0x59, 0x00, 0x00), 7: (0x19, 0x00, 0x00),
@@ -246,7 +246,7 @@ COLOR_MAP = {
 }
 
 # Indices confirmed on real hardware to cause periodic flicker regardless of
-# LED mode/channel — see DEV_NOTES.md "ROOT CAUSE CONFIRMED: low RGB-palette
+# LED mode/channel — see docs/DEV_NOTES.md "ROOT CAUSE CONFIRMED: low RGB-palette
 # color indices". Excluded from closest_color_index() so track-color
 # matching can never land on a flickering index.
 COLOR_MAP_UNSAFE_INDICES = frozenset({1, 2})
@@ -268,7 +268,7 @@ def _saturation(r, g, b):
 
 # Weight for the saturation-mismatch penalty in closest_color_index below.
 # Calibrated against real-hardware test data (5 muted FL track colors, 2
-# already confirmed as good matches) — see DEV_NOTES.md "Third hardware
+# already confirmed as good matches) — see docs/DEV_NOTES.md "Third hardware
 # test: saturation-aware matching" for the full calibration. Stable across
 # 0.025-0.1 for that data (same results throughout); 0.05 picked as a safe
 # middle value, not a fragile threshold.
@@ -298,7 +298,7 @@ def closest_color_index(r, g, b):
 	reverted — it regressed a case already confirmed correct on real
 	hardware (an olive `#544F2B` track color matched index 105, a
 	reasonable brownish-olive, under plain distance; redmean matched it to
-	117, plain grey, instead). See DEV_NOTES.md `OnUpdateLiveMode`
+	117, plain grey, instead). See docs/DEV_NOTES.md `OnUpdateLiveMode`
 	track-color rows for that comparison data.
 
 	Args:
@@ -338,7 +338,7 @@ def closest_color_index_for_fl_color(fl_color):
 			claims `0x--BBGGRR` (red as the *low* byte) — that appears to
 			be a documentation error in the community-maintained API
 			stubs, contradicted by three separate canonical utility
-			functions; confirmed wrong empirically too (see DEV_NOTES.md
+			functions; confirmed wrong empirically too (see docs/DEV_NOTES.md
 			`OnUpdateLiveMode` track-color rows).
 
 	Returns:

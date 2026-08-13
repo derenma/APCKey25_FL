@@ -1,6 +1,6 @@
 [size=150][b]Features and Fixes[/b][/size]
 
-Condensed changelog vs. the original script. Full detail in [i]FEATURES_AND_FIXES.md[/i]/[i]DEV_NOTES.md[/i] in the repo if you want the "why."
+Condensed changelog vs. the original script. Full detail in [i]docs/FEATURES_AND_FIXES.md[/i]/[i]docs/DEV_NOTES.md[/i] in the repo if you want the "why."
 
 --------------------
 

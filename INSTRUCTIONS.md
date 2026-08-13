@@ -168,7 +168,7 @@ playing indicator.
 
 This defaults to `False` because the track-color-matching feature is
 newer and has gone through several rounds of real-hardware bug fixes (see
-`DEV_NOTES.md` and `TESTING_CHECKLIST.md` for the history); flip it to
+`docs/DEV_NOTES.md` and `TESTING_CHECKLIST.md` for the history); flip it to
 `True` to try it, and back to `False` any time as an instant, no-side-effects
 fallback if the color matching looks wrong for your project's track colors.
 

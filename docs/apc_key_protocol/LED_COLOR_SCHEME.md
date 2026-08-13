@@ -23,7 +23,7 @@ structured. Source: `docs/APC Key 25 mk2 - Communication Protocol - v1.1.pdf`.
 > sent with — this is a static, one-time Note On with no polling or resend involved, so it's the
 > device itself animating those specific indices, not a script bug. Index `3` (`#FFFFFF`) is
 > confirmed safe. Other indices haven't been systematically tested — avoid `1`/`2` for any pad
-> color choice until more of the palette is verified. See DEV_NOTES.md "ROOT CAUSE CONFIRMED:
+> color choice until more of the palette is verified. See docs/DEV_NOTES.md "ROOT CAUSE CONFIRMED:
 > low RGB-palette color indices" for the investigation.
 
 MIDI channel (the `X` in `9X`) doubles as the **behavior** selector for RGB pads:
