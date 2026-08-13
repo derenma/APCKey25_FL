@@ -5,7 +5,7 @@ A full comparison of `device_APCKey25mk2.py` (current) against the original
 V2.1 rewrite and everything since. Organized as **New Features** (things V2
 never did at all) and **Bug Fixes** (things V2 did, but wrong — split by
 whether the bug was inherited from V2 or introduced during the rewrite
-itself). See `DEV_NOTES.md` for the full investigation/reasoning behind
+itself). See `docs/DEV_NOTES.md` for the full investigation/reasoning behind
 any individual item; this file is the index, not the detail.
 
 ---
@@ -106,7 +106,7 @@ any individual item; this file is the index, not the detail.
   explanatory note, for FL's auto-linking mechanism. V2 only had
   `# name=`/`# url=`.
 - **`__version__` constant** (currently `2.0.0`), logged on init.
-- **DEV_NOTES.md, LIGHTING_FUNCTION_PLAN.md,
+- **docs/DEV_NOTES.md, LIGHTING_FUNCTION_PLAN.md,
   README.md** — a full documentation set covering design decisions, bug
   histories, and hardware test tracking. V2 had no separate documentation
   of any kind.
@@ -196,5 +196,5 @@ any individual item; this file is the index, not the detail.
 This list favors *behavioral* changes — things a user would notice on
 real hardware, or a real MIDI-safety issue (like the invalid-128 knob
 value). It doesn't attempt to enumerate every docstring, comment, or
-internal refactor between V2 and the current script; see `DEV_NOTES.md`
+internal refactor between V2 and the current script; see `docs/DEV_NOTES.md`
 for that level of detail.
